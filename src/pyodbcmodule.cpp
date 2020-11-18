@@ -554,7 +554,7 @@ static PyObject* mod_connect(PyObject* self, PyObject* args, PyObject* kwargs)
                                      fReadOnly != 0, attrs_before.Detach(), encoding);
 }
 
-
+#ifndef DBMAKER
 static PyObject* mod_drivers(PyObject* self)
 {
     UNUSED(self);
@@ -603,7 +603,6 @@ static PyObject* mod_drivers(PyObject* self)
     return result.Detach();
 }
 
-
 static PyObject* mod_datasources(PyObject* self)
 {
     UNUSED(self);
@@ -644,7 +643,7 @@ static PyObject* mod_datasources(PyObject* self)
 
     return result;
 }
-
+#endif
 
 static PyObject* mod_timefromticks(PyObject* self, PyObject* args)
 {
@@ -819,9 +818,10 @@ static PyMethodDef pyodbc_methods[] =
     { "setDecimalSeparator", (PyCFunction)mod_setdecimalsep,      METH_VARARGS,               setdecimalsep_doc },
     { "getDecimalSeparator", (PyCFunction)mod_getdecimalsep,      METH_NOARGS,               getdecimalsep_doc },
     { "TimestampFromTicks", (PyCFunction)mod_timestampfromticks, METH_VARARGS,               timestampfromticks_doc },
+#ifndef DBMAKER
     { "drivers",            (PyCFunction)mod_drivers,            METH_NOARGS,                drivers_doc },
     { "dataSources",        (PyCFunction)mod_datasources,        METH_NOARGS,                datasources_doc },
-
+#endif
 #ifdef PYODBC_LEAK_CHECK
     { "leakcheck", (PyCFunction)mod_leakcheck, METH_NOARGS, 0 },
 #endif

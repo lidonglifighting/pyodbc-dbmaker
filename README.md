@@ -7,8 +7,8 @@ DBMaker odbc driver is the odbc-compatible driver for DBMaker database managemen
 ### How to install
 
 ```
-git clone  https://github.com/lidonglifighting/pyodbc.git
-cd pyodbc
+git clone https://github.com/dbmaker-go/pyodbc-dbmaker/
+cd pyodbc-dbmaker
 ```
 
 **windows**
@@ -18,8 +18,8 @@ Please install python and visual studio first, for example: python3.8 and visual
 open cmd with administrator
 
 ```
-cd pyodbc
-python setup.py build_ext  --define DBMAKER --include-dirs C:/dbmaker/5.4/include   --library-dirs C:/dbmaker/5.4/lib  --libraries "dmapi54 odbc32"
+cd pyodbc-dbmaker
+python setup.py build_ext  --define DBMAKER --include-dirs C:/dbmaker/5.4/include   --library-dirs C:/dbmaker/5.4/lib  --libraries "dmapi54"
 ```
 If it is caused Error "error: Microsoft Visual C++ 14.0 is required. Get it with "Microsoft Visual C++ Build Tools": https://visualstudio.microsoft.com/downloads/
 
@@ -32,7 +32,7 @@ Then rebuild it.
 ```
 sudo apt-get install build-essential python3-dev libssl-dev libffi-dev libxml2 libxml2-dev libxslt1-dev zlib1g-dev
 sudo apt install unixodbc-dev unixodbc
-python3 setup.py build_ext  --define DBMAKER  --include-dirs /home/dbmaker/5.4/include   --library-dirs /home/dbmaker/5.4/lib  --rpath /home/dbmaker/5.4/lib/so   --libraries "dmapic odbc"
+python3 setup.py build_ext  --define DBMAKER  --include-dirs /home/dbmaker/5.4/include   --library-dirs /home/dbmaker/5.4/lib  --rpath /home/dbmaker/5.4/lib/so   --libraries "dmapic"
 ```
 
 
@@ -48,6 +48,6 @@ Note: for windows, please copy dmapi54.dll to build path of pyodbc.
 
 for example:
 ```
- copy "C:\DBMaker\5.4\bin\dmapi54.dll" "E:\pyodbc\pyodbc\build\lib.win-amd64-3.8\" 
+ copy "C:\DBMaker\5.4\bin\dmapi54.dll" "E:\dbmaker-go\pyodbc-dbmaker\build\lib.win-amd64-3.8\" 
 ```
 
