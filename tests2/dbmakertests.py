@@ -114,13 +114,6 @@ class DBMakerTestCase(unittest.TestCase):
         self.cursor.execute("insert into t1 values (?)", 1)
         self.cursor.execute("insert into t2 values (?)", datetime.now())
 
-    def test_drivers(self):
-        p = pyodbc.drivers()
-        self.assertTrue(isinstance(p, list))
-
-    def test_datasources(self):
-        p = pyodbc.dataSources()
-        self.assertTrue(isinstance(p, dict))
 
     def test_getinfo_string(self):
         value = self.cnxn.getinfo(pyodbc.SQL_CATALOG_NAME_SEPARATOR)
