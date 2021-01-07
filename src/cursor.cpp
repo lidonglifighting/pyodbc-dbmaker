@@ -82,7 +82,7 @@ static Cursor* Cursor_Validate(PyObject* obj, DWORD flags)
         if (cursor->hstmt == SQL_NULL_HANDLE)
         {
             if (flags & CURSOR_RAISE_ERROR)
-                PyErr_SetString(ProgrammingError, "Attempt to use a closed cursor.");
+                PyErr_SetString(ProgrammingError, "Attempt to use a closed cursor.");//Cannot operate on a closed cursor.
             return 0;
         }
 
@@ -588,6 +588,7 @@ static PyObject* execute(Cursor* cur, PyObject* pSql, PyObject* params, bool ski
     free_results(cur, FREE_STATEMENT | KEEP_PREPARED);
 
     const char* szLastFunction = "";
+    int rollback = 0;
 
     if (cParams > 0)
     {
@@ -634,6 +635,9 @@ static PyObject* execute(Cursor* cur, PyObject* pSql, PyObject* params, bool ski
 
         const char* pch = PyBytes_AS_STRING(query.Get());
         SQLINTEGER  cch = (SQLINTEGER)(PyBytes_GET_SIZE(query.Get()) / (isWide ? sizeof(ODBCCHAR) : 1));
+        
+        if (isWide && wcsncmp((WCHAR*)pch, L"ROLLBACK", 8) == 0)
+            rollback = 1;
 
         Py_BEGIN_ALLOW_THREADS
         if (isWide)
@@ -832,38 +836,41 @@ static PyObject* execute(Cursor* cur, PyObject* pSql, PyObject* params, bool ski
     TRACE("SQLRowCount: %d\n", cRows);
 
     SQLSMALLINT cCols = 0;
-    Py_BEGIN_ALLOW_THREADS
-    ret = SQLNumResultCols(cur->hstmt, &cCols);
-    Py_END_ALLOW_THREADS
-    if (!SQL_SUCCEEDED(ret))
+    
+    if (rollback == 0)
     {
-        // Note: The SQL Server driver sometimes returns HY007 here if multiple statements (separated by ;) were
-        // submitted.  This is not documented, but I've seen it with multiple successful inserts.
+        Py_BEGIN_ALLOW_THREADS
+        ret = SQLNumResultCols(cur->hstmt, &cCols);
+        Py_END_ALLOW_THREADS
+        if (!SQL_SUCCEEDED(ret))
+        {
+                // Note: The SQL Server driver sometimes returns HY007 here if multiple statements (separated by ;) were
+                // submitted.  This is not documented, but I've seen it with multiple successful inserts.
 
         return RaiseErrorFromHandle(cur->cnxn, "SQLNumResultCols", cur->cnxn->hdbc, cur->hstmt);
-    }
+        }
+        TRACE("SQLNumResultCols: %d\n", cCols);
+        if (cur->cnxn->hdbc == SQL_NULL_HANDLE)
+        {
+            // The connection was closed by another thread in the ALLOW_THREADS block above.
+            return RaiseErrorV(0, ProgrammingError, "The cursor's connection was closed.");
+        }
 
-    TRACE("SQLNumResultCols: %d\n", cCols);
+        if (!SQL_SUCCEEDED(ret))
+            return RaiseErrorFromHandle(cur->cnxn, "SQLRowCount", cur->cnxn->hdbc, cur->hstmt);
 
-    if (cur->cnxn->hdbc == SQL_NULL_HANDLE)
-    {
-        // The connection was closed by another thread in the ALLOW_THREADS block above.
-        return RaiseErrorV(0, ProgrammingError, "The cursor's connection was closed.");
-    }
+        if (cCols != 0)
+        {
+            // A result set was created.
 
-    if (!SQL_SUCCEEDED(ret))
-        return RaiseErrorFromHandle(cur->cnxn, "SQLRowCount", cur->cnxn->hdbc, cur->hstmt);
+            if (!PrepareResults(cur, cCols))
+                return 0;
 
-    if (cCols != 0)
-    {
-        // A result set was created.
+            if (!create_name_map(cur, cCols, lowercase()))
+                return 0;
+        }
 
-        if (!PrepareResults(cur, cCols))
-            return 0;
-
-        if (!create_name_map(cur, cCols, lowercase()))
-            return 0;
-    }
+    }   
 
     Py_INCREF(cur);
     return (PyObject*)cur;
