@@ -64,7 +64,7 @@ static char module_doc[] =
     "  connections.  Note that connections and cursors may be used by different\n"
     "  threads, just not at the same time.\n"
     "\n"
-    "paramstyle\n"
+    "qmark\n"
     "  The string constant 'qmark' to indicate parameters are identified using\n"
     "  question marks.";
 
@@ -575,7 +575,9 @@ static PyObject* mod_drivers(PyObject* self)
 
     for (;;)
     {
+        Py_BEGIN_ALLOW_THREADS
         ret = SQLDrivers(henv, nDirection, szDriverDesc, _countof(szDriverDesc), &cbDriverDesc, 0, 0, &cbAttrs);
+        Py_END_ALLOW_THREADS
 
         if (!SQL_SUCCEEDED(ret))
             break;
@@ -614,9 +616,9 @@ static PyObject* mod_datasources(PyObject* self)
     if (!result)
         return 0;
 
-    SQLCHAR szDSN[500]; // Using a buffer larger than SQL_MAX_DSN_LENGTH + 1 for systems that ignore it
+    SQLCHAR szDSN[SQL_MAX_DSN_LENGTH];
     SWORD cbDSN;
-    SQLCHAR szDesc[500];
+    SQLCHAR szDesc[200];
     SWORD cbDesc;
 
     SQLUSMALLINT nDirection = SQL_FETCH_FIRST;

@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: latin-1 -*-
 
 usage = """\
 usage: %prog [options] connection_string
@@ -192,7 +193,7 @@ class SqliteTestCase(unittest.TestCase):
         locals()['test_text_%s' % len(value)] = _maketest(value)
 
     def test_text_upperlatin(self):
-        self._test_strtype('varchar', 'รก')
+        self._test_strtype('varchar', 'แ')
 
     #
     # blob
