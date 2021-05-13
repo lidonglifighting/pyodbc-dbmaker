@@ -134,7 +134,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
         pi->BufferLength = pi->ColumnSize && PyBuffer_GetMemory(cell, 0) >= 0 ? pi->ColumnSize : sizeof(DAEParam);
     }
 #endif
-    else if (cell == Py_None || cell == null_binary)
+    else if (cell == Py_None)
     {
         // Use the SQL type to guess what Nones should be inserted as here.
         switch (pi->ParameterType)
@@ -587,7 +587,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         *outbuf += pi->BufferLength;
         ind = sizeof(SQL_NUMERIC_STRUCT);
     }
-    else if (cell == Py_None || cell == null_binary)
+    else if (cell == Py_None)
     {
         *outbuf += pi->BufferLength;
         ind = SQL_NULL_DATA;
@@ -1458,7 +1458,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
         Py_ssize_t i = PySequence_Size(info.pObject) - info.ColumnSize;
         Py_ssize_t ncols = 0;
-        while (i >= 0 && i < PySequence_Size(info.pObject))
+        while (i < PySequence_Size(info.pObject))
         {
             PyObject *row = PySequence_GetItem(info.pObject, i);
             Py_XDECREF(row);
@@ -1481,7 +1481,6 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
         {
             // TVP has no columns --- is null
             info.nested = 0;
-            info.StrLen_or_Ind = SQL_DEFAULT_PARAM;
         }
         else
         {
@@ -2010,11 +2009,6 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
                         offset += remaining;
                     }
                     while (offset < cb);
-
-                    if (PyUnicode_Check(pInfo->cell) && PyBytes_Check(objCell))
-                    {
-                        Py_XDECREF(objCell);
-                    }
                 }
     #if PY_MAJOR_VERSION < 3
                 else if (PyBuffer_Check(objCell))
