@@ -622,8 +622,7 @@ class PGTestCase(unittest.TestCase):
 
         result = self.cursor.execute("select s from t1").fetchone()[0]
 
-
- self.assertEqual(result, v)
+        self.assertEqual(result, v)
 
     def test_cursor_messages(self):
         """
