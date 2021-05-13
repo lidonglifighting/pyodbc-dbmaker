@@ -25,7 +25,7 @@ static const struct SqlStateMapping sql_state_mapping[] =
     { "08007", 5, &OperationalError },
     { "08S01", 5, &OperationalError },
     { "0A000", 5, &NotSupportedError },
-    { "28000", 5, &InterfaceError },
+    { "28000", 5, &DatabaseError },
     { "40002", 5, &IntegrityError },
     { "22",    2, &DataError },
     { "23",    2, &IntegrityError },
@@ -191,6 +191,36 @@ PyObject* RaiseErrorFromHandle(Connection *conn, const char* szFunction, HDBC hd
     }
 
     return 0;
+}
+
+
+inline void CopySqlState(const ODBCCHAR* src, char* dest)
+{
+    // Copies a SQLSTATE read as SQLWCHAR into a character buffer.  We know that SQLSTATEs are
+    // composed of ASCII characters and we need one standard to compare when choosing
+    // exceptions.
+    //
+    // Strangely, even when the error messages are UTF-8, PostgreSQL and MySQL encode the
+    // sqlstate as UTF-16LE.  We'll simply copy all non-zero bytes, with some checks for
+    // running off the end of the buffers which will work for ASCII, UTF8, and UTF16 LE & BE.
+    // It would work for UTF32 if I increase the size of the ODBCCHAR buffer to handle it.
+    //
+    // (In the worst case, if a driver does something totally weird, we'll have an incomplete
+    // SQLSTATE.)
+    //
+
+    const char* pchSrc = (const char*)src;
+    const char* pchSrcMax = pchSrc + sizeof(ODBCCHAR) * 5;
+    char* pchDest = dest;         // Where we are copying into dest
+    char* pchDestMax = dest + 5;  // We know a SQLSTATE is 5 characters long
+
+    while (pchDest < pchDestMax && pchSrc < pchSrcMax)
+    {
+        if (*pchSrc)
+            *pchDest++ = *pchSrc;
+        pchSrc++;
+    }
+    *pchDest = 0;
 }
 
 
