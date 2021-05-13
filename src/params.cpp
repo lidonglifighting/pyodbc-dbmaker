@@ -134,7 +134,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
         pi->BufferLength = pi->ColumnSize && PyBuffer_GetMemory(cell, 0) >= 0 ? pi->ColumnSize : sizeof(DAEParam);
     }
 #endif
-    else if (cell == Py_None || cell == null_binary)
+    else if (cell == Py_None)
     {
         // Use the SQL type to guess what Nones should be inserted as here.
         switch (pi->ParameterType)
@@ -181,12 +181,15 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
             goto Type_Time;
         case SQL_TYPE_TIMESTAMP:
             goto Type_DateTime;
+#ifdef SQL_GUID
         case SQL_GUID:
             goto Type_UUID;
+#endif
         default:
             goto Type_Bytes;
         }
     }
+#ifdef SQL_GUID
     else if (IsInstanceForThread(cell, "uuid", "UUID", &cls) && cls)
     {
     Type_UUID:
@@ -194,6 +197,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
         pi->ValueType = SQL_C_GUID;
         pi->BufferLength = 16;
     }
+#endif
     else if (IsInstanceForThread(cell, "decimal", "Decimal", &cls) && cls)
     {
     Type_Decimal:
@@ -507,6 +511,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         }
     }
 #endif
+#ifdef SQL_GUID
     else if (IsInstanceForThread(cell, "uuid", "UUID", &cls) && cls)
     {
         if (pi->ValueType != SQL_C_GUID)
@@ -520,6 +525,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         *outbuf += pi->BufferLength;
         ind = 16;
     }
+#endif
     else if (IsInstanceForThread(cell, "decimal", "Decimal", &cls) && cls)
     {
         if (pi->ValueType != SQL_C_NUMERIC)
@@ -581,7 +587,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         *outbuf += pi->BufferLength;
         ind = sizeof(SQL_NUMERIC_STRUCT);
     }
-    else if (cell == Py_None || cell == null_binary)
+    else if (cell == Py_None)
     {
         *outbuf += pi->BufferLength;
         ind = SQL_NULL_DATA;
@@ -1015,7 +1021,7 @@ static char* CreateDecimalString(long sign, PyObject* digits, long exp)
 
     return pch;
 }
-
+#ifdef SQL_GUID
 static bool GetUUIDInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, PyObject* uuid_type)
 {
     // uuid_type: This is a new reference that we are responsible for freeing.
@@ -1041,8 +1047,7 @@ static bool GetUUIDInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInf
     info.StrLen_or_Ind = sizeof(SQLGUID);
     return true;
 }
-
-
+#endif
 static bool GetDecimalInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo& info, PyObject* decimal_type)
 {
     // decimal_type: This is a new reference that we are responsible for freeing.
@@ -1278,13 +1283,13 @@ bool GetParameterInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamInfo&
         return GetDecimalInfo(cur, index, param, info, cls);
 
     // UUID
-
+#ifdef SQL_GUID
     if (!IsInstanceForThread(param, "uuid", "UUID", &cls))
         return false;
 
     if (cls != 0)
         return GetUUIDInfo(cur, index, param, info, cls);
-
+#endif
     if (PySequence_Check(param))
         return GetTableInfo(cur, index, param, info);
 
@@ -1436,7 +1441,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
         Py_ssize_t i = PySequence_Size(info.pObject) - info.ColumnSize;
         Py_ssize_t ncols = 0;
-        while (i >= 0 && i < PySequence_Size(info.pObject))
+        while (i < PySequence_Size(info.pObject))
         {
             PyObject *row = PySequence_GetItem(info.pObject, i);
             Py_XDECREF(row);
@@ -1459,7 +1464,6 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
         {
             // TVP has no columns --- is null
             info.nested = 0;
-            info.StrLen_or_Ind = SQL_DEFAULT_PARAM;
         }
         else
         {
@@ -1988,11 +1992,6 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
                         offset += remaining;
                     }
                     while (offset < cb);
-
-                    if (PyUnicode_Check(pInfo->cell) && PyBytes_Check(objCell))
-                    {
-                        Py_XDECREF(objCell);
-                    }
                 }
     #if PY_MAJOR_VERSION < 3
                 else if (PyBuffer_Check(objCell))
