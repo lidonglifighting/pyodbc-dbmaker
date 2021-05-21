@@ -1404,6 +1404,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
   TRACE("BIND: param=%ld ValueType=%d (%s) ParameterType=%d (%s) ColumnSize=%ld DecimalDigits=%d BufferLength=%ld *pcb=%ld\n",
           (index+1), info.ValueType, CTypeName(info.ValueType), sqltype, SqlTypeName(sqltype), colsize,
           scale, info.BufferLength, info.StrLen_or_Ind);
+
    if (info.ValueType == SQL_C_WCHAR && sqltype == SQL_WVARCHAR)
     {/* dbmaker sqlbindparameter need real sql type of parameter */
         SQLULEN ParameterSizePtr;
