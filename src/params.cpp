@@ -1406,7 +1406,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
           scale, info.BufferLength, info.StrLen_or_Ind);
 
     if (info.ValueType == SQL_C_WCHAR && sqltype == SQL_WVARCHAR)
-    {/*dbmaker sqlbindparameter need real sql type of parameter*/
+    {//dbmaker sqlbindparameter need real sql type of parameter
         SQLULEN ParameterSizePtr;
         SQLSMALLINT DecimalDigitsPtr;
         SQLSMALLINT NullablePtr;
@@ -1423,6 +1423,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
             sqltype = SQL_INTEGER;
         }
     }
+
     SQLRETURN ret = -1;
     Py_BEGIN_ALLOW_THREADS
     ret = SQLBindParameter(cur->hstmt, (SQLUSMALLINT)(index + 1), SQL_PARAM_INPUT,
