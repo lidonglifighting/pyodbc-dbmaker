@@ -7,7 +7,7 @@ DBMaker odbc driver is the odbc-compatible driver for DBMaker database managemen
 ### How to install
 
 ```
-git clone -b dbmaker https://github.com/dbmaker-go/pyodbc-dbmaker/
+git clone https://github.com/dbmaker-go/pyodbc-dbmaker/
 cd pyodbc-dbmaker
 ```
 
