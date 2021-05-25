@@ -82,7 +82,7 @@ static Cursor* Cursor_Validate(PyObject* obj, DWORD flags)
         if (cursor->hstmt == SQL_NULL_HANDLE)
         {
             if (flags & CURSOR_RAISE_ERROR)
-                PyErr_SetString(ProgrammingError, "Attempt to use a closed cursor.");//Cannot operate on a closed cursor.
+                PyErr_SetString(ProgrammingError, "Attempt to use a closed cursor.");
             return 0;
         }
 
