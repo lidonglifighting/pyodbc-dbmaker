@@ -1608,7 +1608,8 @@ class SqlServerTestCase(unittest.TestCase):
         self.cursor.execute("create table t1(s varchar(800))")
         def test():
             self.cursor.execute("insert into t1 values (?)", value)
-        self.assertRaises(pyodbc.DataError, test)
+        # different versions of SQL Server generate different errors
+        self.assertRaises((pyodbc.DataError, pyodbc.ProgrammingError), test)
 
     def test_geometry_null_insert(self):
         def convert(value):
@@ -1926,6 +1927,14 @@ class SqlServerTestCase(unittest.TestCase):
                     if(result_array[r][c] != param_array[r][c]):
                         print("Mismatch at row " + str(r+1) + ", column " + str(c+1) + "; expected:", param_array[r][c] , " received:", result_array[r][c])
                         success = False
+
+        try:
+            result_array = self.cursor.execute("exec SelectTVP ?", [[]]).fetchall()
+            self.assertEqual(result_array, [])
+        except Exception as ex:
+            print("Failed to execute SelectTVP")
+            print("Exception: [" + type(ex).__name__ + "]", ex.args)
+            success = False
 
         self.assertEqual(success, True)
 

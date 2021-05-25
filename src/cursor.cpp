@@ -300,6 +300,7 @@ enum free_results_flags
     KEEP_STATEMENT = 0x02,
     FREE_PREPARED  = 0x04,
     KEEP_PREPARED  = 0x08,
+    KEEP_MESSAGES  = 0x10,
 
     STATEMENT_MASK = 0x03,
     PREPARED_MASK  = 0x0C
@@ -365,6 +366,12 @@ static bool free_results(Cursor* self, int flags)
         self->map_name_to_index = 0;
     }
 
+    if ((flags & KEEP_MESSAGES) == 0)
+    {
+        Py_XDECREF(self->messages);
+        self->messages = PyList_New(0);
+    }
+
     self->rowcount = -1;
 
     return true;
@@ -401,11 +408,13 @@ static void closeimpl(Cursor* cur)
     Py_XDECREF(cur->description);
     Py_XDECREF(cur->map_name_to_index);
     Py_XDECREF(cur->cnxn);
+    Py_XDECREF(cur->messages);
 
     cur->pPreparedSQL = 0;
     cur->description = 0;
     cur->map_name_to_index = 0;
     cur->cnxn = 0;
+    cur->messages = 0;
 }
 
 static char close_doc[] =
@@ -563,13 +572,15 @@ static int GetDiagRecs(Cursor* cur)
     SQLSMALLINT iRecNumber = 1;  // the index of the diagnostic records (1-based)
     ODBCCHAR    cSQLState[6];  // five-character SQLSTATE code (plus terminating NULL)
     SQLINTEGER  iNativeError;
+
     SQLSMALLINT iMessageLen = 1023;
     ODBCCHAR    *cMessageText = (ODBCCHAR*) pyodbc_malloc((iMessageLen + 1) * sizeof(ODBCCHAR));
+
     SQLSMALLINT iTextLength;
 
     SQLRETURN ret;
     char sqlstate_ascii[6] = "";  // ASCII version of the SQLState
-    
+   
     if (!cMessageText) {
       PyErr_NoMemory();
       return 0;
@@ -590,7 +601,6 @@ static int GetDiagRecs(Cursor* cur)
         ret = SQLGetDiagRecW(
             SQL_HANDLE_STMT, cur->hstmt, iRecNumber, (SQLWCHAR*)cSQLState, &iNativeError,
            (SQLWCHAR*)cMessageText, iMessageLen, &iTextLength
-
         );
         Py_END_ALLOW_THREADS
         if (!SQL_SUCCEEDED(ret))
@@ -649,7 +659,11 @@ static int GetDiagRecs(Cursor* cur)
 
         iRecNumber++;
     }
+<<<<<<< HEAD
     pyodbc_free(cMessageText);
+=======
+
+>>>>>>> rebase with upstream master
     Py_XDECREF(cur->messages);
     cur->messages = msg_list;  // cur->messages now owns the msg_list reference
 
@@ -763,6 +777,11 @@ static PyObject* execute(Cursor* cur, PyObject* pSql, PyObject* params, bool ski
         RaiseErrorFromHandle(cur->cnxn, "SQLExecDirectW", cur->cnxn->hdbc, cur->hstmt);
         FreeParameterData(cur);
         return 0;
+    }
+
+    if (ret == SQL_SUCCESS_WITH_INFO)
+    {
+        GetDiagRecs(cur);
     }
 
     while (ret == SQL_NEED_DATA)
@@ -1511,7 +1530,7 @@ static char statistics_doc[] =
     "Creates a results set of statistics about a single table and the indexes associated with \n"
     "the table by executing SQLStatistics.\n"
     "unique\n"
-    "  If True, only unique indexes are retured.  Otherwise all indexes are returned.\n"
+    "  If True, only unique indexes are returned.  Otherwise all indexes are returned.\n"
     "quick\n"
     "  If True, CARDINALITY and PAGES are returned  only if they are readily available\n"
     "  from the server\n"
@@ -1885,6 +1904,7 @@ static PyObject* Cursor_nextset(PyObject* self, PyObject* args)
         free_results(cur, FREE_STATEMENT | KEEP_PREPARED);
         Py_RETURN_FALSE;
     }
+
     if (!SQL_SUCCEEDED(ret))
     {
         TRACE("nextset: %d not SQL_SUCCEEDED\n", ret);
@@ -1917,6 +1937,17 @@ static PyObject* Cursor_nextset(PyObject* self, PyObject* args)
         Py_RETURN_FALSE;
     }
 
+    // Must retrieve DiagRecs immediately after SQLMoreResults
+    if (ret == SQL_SUCCESS_WITH_INFO)
+    {
+        GetDiagRecs(cur);
+    }
+    else
+    {
+        Py_XDECREF(cur->messages);
+        cur->messages = PyList_New(0);
+    }
+
     SQLSMALLINT cCols;
     Py_BEGIN_ALLOW_THREADS
     ret = SQLNumResultCols(cur->hstmt, &cCols);
@@ -1927,10 +1958,10 @@ static PyObject* Cursor_nextset(PyObject* self, PyObject* args)
         // submitted.  This is not documented, but I've seen it with multiple successful inserts.
 
         PyObject* pError = GetErrorFromHandle(cur->cnxn, "SQLNumResultCols", cur->cnxn->hdbc, cur->hstmt);
-        free_results(cur, FREE_STATEMENT | KEEP_PREPARED);
+        free_results(cur, FREE_STATEMENT | KEEP_PREPARED | KEEP_MESSAGES);
         return pError;
     }
-    free_results(cur, KEEP_STATEMENT | KEEP_PREPARED);
+    free_results(cur, KEEP_STATEMENT | KEEP_PREPARED | KEEP_MESSAGES);
 
     if (cCols != 0)
     {
@@ -2210,6 +2241,10 @@ static char fastexecmany_doc[] =
     "This read/write attribute specifies whether to use a faster executemany() which\n" \
     "uses parameter arrays. Not all drivers may work with this implementation.";
 
+static char messages_doc[] =
+    "This read-only attribute is a list of all the diagnostic messages in the\n" \
+    "current result set.";
+
 static PyMemberDef Cursor_members[] =
 {
     {"rowcount",    T_INT,       offsetof(Cursor, rowcount),        READONLY, rowcount_doc },
@@ -2217,6 +2252,7 @@ static PyMemberDef Cursor_members[] =
     {"arraysize",   T_INT,       offsetof(Cursor, arraysize),       0,        arraysize_doc },
     {"connection",  T_OBJECT_EX, offsetof(Cursor, cnxn),            READONLY, connection_doc },
     {"fast_executemany",T_BOOL,  offsetof(Cursor, fastexecmany),    0,        fastexecmany_doc },
+    {"messages",    T_OBJECT_EX, offsetof(Cursor, messages),        READONLY, messages_doc },
     { 0 }
 };
 
@@ -2505,9 +2541,11 @@ Cursor_New(Connection* cnxn)
         cur->rowcount          = -1;
         cur->map_name_to_index = 0;
         cur->fastexecmany      = 0;
+        cur->messages          = Py_None;
 
         Py_INCREF(cnxn);
         Py_INCREF(cur->description);
+        Py_INCREF(cur->messages);
 
         SQLRETURN ret;
         Py_BEGIN_ALLOW_THREADS

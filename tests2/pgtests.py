@@ -524,7 +524,7 @@ class PGTestCase(unittest.TestCase):
 
         result = self.cursor.execute("select s from t1").fetchone()[0]
 
-        self.assertEqual(result, v)
+self.assertEqual(result, v)
 
     def test_cursor_messages(self):
         """
@@ -536,7 +536,7 @@ class PGTestCase(unittest.TestCase):
 
         # using INFO message level because they are always sent to the client regardless of
         # client_min_messages: https://www.postgresql.org/docs/11/runtime-config-client.html
-        for msg in ('hello world', 'ABCDEFGHIJ' * 400):
+        for msg in ('hello world', 'ABCDEFGHIJ' * 800):
             self.cursor.execute("""
                 CREATE OR REPLACE PROCEDURE test_cursor_messages()
                 LANGUAGE plpgsql
@@ -552,8 +552,8 @@ class PGTestCase(unittest.TestCase):
             self.assertTrue(len(messages) > 0)
             self.assertTrue(all(type(m) is tuple for m in messages))
             self.assertTrue(all(len(m) == 2 for m in messages))
-            self.assertTrue(all(type(m[0]) is unicode for m in messages))
-            self.assertTrue(all(type(m[1]) is unicode for m in messages))
+            self.assertTrue(all(type(m[0]) is str for m in messages))
+            self.assertTrue(all(type(m[1]) is str for m in messages))
             self.assertTrue(all(m[0] == '[01000] (-1)' for m in messages))
             self.assertTrue(''.join(m[1] for m in messages).endswith(msg))
 
