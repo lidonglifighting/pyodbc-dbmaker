@@ -134,7 +134,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
         pi->BufferLength = pi->ColumnSize && PyBuffer_GetMemory(cell, 0) >= 0 ? pi->ColumnSize : sizeof(DAEParam);
     }
 #endif
-    else if (cell == Py_None)
+    else if (cell == Py_None || cell == null_binary)
     {
         // Use the SQL type to guess what Nones should be inserted as here.
         switch (pi->ParameterType)
@@ -587,7 +587,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         *outbuf += pi->BufferLength;
         ind = sizeof(SQL_NUMERIC_STRUCT);
     }
-    else if (cell == Py_None)
+    else if (cell == Py_None || cell == null_binary)
     {
         *outbuf += pi->BufferLength;
         ind = SQL_NULL_DATA;
@@ -1404,9 +1404,8 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
   TRACE("BIND: param=%ld ValueType=%d (%s) ParameterType=%d (%s) ColumnSize=%ld DecimalDigits=%d BufferLength=%ld *pcb=%ld\n",
           (index+1), info.ValueType, CTypeName(info.ValueType), sqltype, SqlTypeName(sqltype), colsize,
           scale, info.BufferLength, info.StrLen_or_Ind);
-
-    if (info.ValueType == SQL_C_WCHAR && sqltype == SQL_WVARCHAR)
-    {//dbmaker sqlbindparameter need real sql type of parameter
+   if (info.ValueType == SQL_C_WCHAR && sqltype == SQL_WVARCHAR)
+    {/* dbmaker sqlbindparameter need real sql type of parameter */
         SQLULEN ParameterSizePtr;
         SQLSMALLINT DecimalDigitsPtr;
         SQLSMALLINT NullablePtr;
@@ -1423,7 +1422,6 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
             sqltype = SQL_INTEGER;
         }
     }
-
     SQLRETURN ret = -1;
     Py_BEGIN_ALLOW_THREADS
     ret = SQLBindParameter(cur->hstmt, (SQLUSMALLINT)(index + 1), SQL_PARAM_INPUT,
@@ -1460,7 +1458,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
         Py_ssize_t i = PySequence_Size(info.pObject) - info.ColumnSize;
         Py_ssize_t ncols = 0;
-        while (i < PySequence_Size(info.pObject))
+        while (i >= 0 && i < PySequence_Size(info.pObject))
         {
             PyObject *row = PySequence_GetItem(info.pObject, i);
             Py_XDECREF(row);
@@ -1483,6 +1481,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
         {
             // TVP has no columns --- is null
             info.nested = 0;
+            info.StrLen_or_Ind = SQL_DEFAULT_PARAM;
         }
         else
         {
@@ -2011,6 +2010,11 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
                         offset += remaining;
                     }
                     while (offset < cb);
+
+                    if (PyUnicode_Check(pInfo->cell) && PyBytes_Check(objCell))
+                    {
+                        Py_XDECREF(objCell);
+                    }
                 }
     #if PY_MAJOR_VERSION < 3
                 else if (PyBuffer_Check(objCell))
