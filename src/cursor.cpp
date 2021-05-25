@@ -583,6 +583,7 @@ static int GetDiagRecs(Cursor* cur)
       PyErr_NoMemory();
       return 0;
     }
+
     msg_list = PyList_New(0);
     if (!msg_list)
         return 0;
@@ -597,7 +598,8 @@ static int GetDiagRecs(Cursor* cur)
         Py_BEGIN_ALLOW_THREADS
         ret = SQLGetDiagRecW(
             SQL_HANDLE_STMT, cur->hstmt, iRecNumber, (SQLWCHAR*)cSQLState, &iNativeError,
-            (SQLWCHAR*)cMessageText, iMessageLen, &iTextLength
+           (SQLWCHAR*)cMessageText, iMessageLen, &iTextLength
+
         );
         Py_END_ALLOW_THREADS
         if (!SQL_SUCCEEDED(ret))
@@ -657,7 +659,6 @@ static int GetDiagRecs(Cursor* cur)
         iRecNumber++;
     }
     pyodbc_free(cMessageText);
-
     Py_XDECREF(cur->messages);
     cur->messages = msg_list;  // cur->messages now owns the msg_list reference
 

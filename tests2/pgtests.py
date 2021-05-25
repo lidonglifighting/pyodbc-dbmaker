@@ -557,7 +557,6 @@ class PGTestCase(unittest.TestCase):
             self.assertTrue(all(m[0] == '[01000] (-1)' for m in messages))
             self.assertTrue(''.join(m[1] for m in messages).endswith(msg))
 
-
 def main():
     from optparse import OptionParser
     parser = OptionParser(usage="usage: %prog [options] connection_string")
