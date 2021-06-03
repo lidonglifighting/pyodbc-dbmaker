@@ -1417,9 +1417,9 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
         Py_END_ALLOW_THREADS
 
         if (SQL_SUCCEEDED(ret) && \
-            (ParamSqlType == SQL_INTEGER))
+            (ParamSqlType != SQL_WVARCHAR))
         {
-            sqltype = SQL_INTEGER;
+            sqltype = ParamSqlType;
         }
     }
     SQLRETURN ret = -1;
