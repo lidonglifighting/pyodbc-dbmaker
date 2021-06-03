@@ -572,19 +572,17 @@ static int GetDiagRecs(Cursor* cur)
     SQLSMALLINT iRecNumber = 1;  // the index of the diagnostic records (1-based)
     ODBCCHAR    cSQLState[6];  // five-character SQLSTATE code (plus terminating NULL)
     SQLINTEGER  iNativeError;
-
     SQLSMALLINT iMessageLen = 1023;
     ODBCCHAR    *cMessageText = (ODBCCHAR*) pyodbc_malloc((iMessageLen + 1) * sizeof(ODBCCHAR));
     SQLSMALLINT iTextLength;
 
     SQLRETURN ret;
     char sqlstate_ascii[6] = "";  // ASCII version of the SQLState
-
+    
     if (!cMessageText) {
       PyErr_NoMemory();
       return 0;
     }
-
     msg_list = PyList_New(0);
     if (!msg_list)
         return 0;
@@ -599,11 +597,29 @@ static int GetDiagRecs(Cursor* cur)
         Py_BEGIN_ALLOW_THREADS
         ret = SQLGetDiagRecW(
             SQL_HANDLE_STMT, cur->hstmt, iRecNumber, (SQLWCHAR*)cSQLState, &iNativeError,
-            (SQLWCHAR*)cMessageText, (short)(_countof(cMessageText)-1), &iTextLength
+            (SQLWCHAR*)cMessageText, iMessageLen, &iTextLength
         );
         Py_END_ALLOW_THREADS
         if (!SQL_SUCCEEDED(ret))
             break;
+
+        // If needed, allocate a bigger error message buffer and retry.
+        if (iTextLength > iMessageLen - 1) {
+            iMessageLen = iTextLength + 1;
+            if (!pyodbc_realloc((BYTE**) &cMessageText, (iMessageLen + 1) * sizeof(ODBCCHAR))) {
+                pyodbc_free(cMessageText);
+                PyErr_NoMemory();
+                return 0;
+            }
+            Py_BEGIN_ALLOW_THREADS
+            ret = SQLGetDiagRecW(
+                SQL_HANDLE_STMT, cur->hstmt, iRecNumber, (SQLWCHAR*)cSQLState, &iNativeError,
+                (SQLWCHAR*)cMessageText, iMessageLen, &iTextLength
+            );
+            Py_END_ALLOW_THREADS
+            if (!SQL_SUCCEEDED(ret))
+                break;
+        }
 
         cSQLState[5] = 0;  // Not always NULL terminated (MS Access)
         CopySqlState(cSQLState, sqlstate_ascii);
@@ -640,6 +656,7 @@ static int GetDiagRecs(Cursor* cur)
 
         iRecNumber++;
     }
+    pyodbc_free(cMessageText);
 
     Py_XDECREF(cur->messages);
     cur->messages = msg_list;  // cur->messages now owns the msg_list reference
@@ -647,86 +664,6 @@ static int GetDiagRecs(Cursor* cur)
     return 0;
 }
 
-<<<<<<< HEAD
-static int GetDiagRecs(Cursor* cur)
-{
-    // Retrieves all diagnostic records from the cursor and assigns them to the "messages" attribute.
-
-    PyObject* msg_list;  // the "messages" as a Python list of diagnostic records
-
-    SQLSMALLINT iRecNumber = 1;  // the index of the diagnostic records (1-based)
-    ODBCCHAR    cSQLState[6];  // five-character SQLSTATE code (plus terminating NULL)
-    SQLINTEGER  iNativeError;
-    ODBCCHAR    cMessageText[10001];  // PRINT statements can be large, hopefully 10K bytes will be enough
-    SQLSMALLINT iTextLength;
-
-    SQLRETURN ret;
-    char sqlstate_ascii[6] = "";  // ASCII version of the SQLState
-
-    msg_list = PyList_New(0);
-    if (!msg_list)
-        return 0;
-
-    for (;;)
-    {
-        cSQLState[0]    = 0;
-        iNativeError    = 0;
-        cMessageText[0] = 0;
-        iTextLength     = 0;
-
-        Py_BEGIN_ALLOW_THREADS
-        ret = SQLGetDiagRecW(
-            SQL_HANDLE_STMT, cur->hstmt, iRecNumber, (SQLWCHAR*)cSQLState, &iNativeError,
-            (SQLWCHAR*)cMessageText, (short)(_countof(cMessageText)-1), &iTextLength
-        );
-        Py_END_ALLOW_THREADS
-        if (!SQL_SUCCEEDED(ret))
-            break;
-
-        cSQLState[5] = 0;  // Not always NULL terminated (MS Access)
-        CopySqlState(cSQLState, sqlstate_ascii);
-        PyObject* msg_class = PyUnicode_FromFormat("[%s] (%ld)", sqlstate_ascii, (long)iNativeError);
-
-        // Default to UTF-16, which may not work if the driver/manager is using some other encoding
-        const char *unicode_enc = cur->cnxn ? cur->cnxn->metadata_enc.name : ENCSTR_UTF16NE;
-        PyObject* msg_value = PyUnicode_Decode(
-            (char*)cMessageText, iTextLength * sizeof(ODBCCHAR), unicode_enc, "strict"
-        );
-        if (!msg_value)
-        {
-            // If the char cannot be decoded, return something rather than nothing.
-            Py_XDECREF(msg_value);
-            msg_value = PyBytes_FromStringAndSize((char*)cMessageText, iTextLength * sizeof(ODBCCHAR));
-        }
-
-        PyObject* msg_tuple = PyTuple_New(2);  // the message as a Python tuple of class and value
-
-        if (msg_class && msg_value && msg_tuple)
-        {
-            PyTuple_SetItem(msg_tuple, 0, msg_class);  // msg_tuple now owns the msg_class reference
-            PyTuple_SetItem(msg_tuple, 1, msg_value);  // msg_tuple now owns the msg_value reference
-
-            PyList_Append(msg_list, msg_tuple);
-            Py_XDECREF(msg_tuple);  // whether PyList_Append succeeds or not
-        }
-        else
-        {
-            Py_XDECREF(msg_class);
-            Py_XDECREF(msg_value);
-            Py_XDECREF(msg_tuple);
-        }
-
-        iRecNumber++;
-    }
-
-    Py_XDECREF(cur->messages);
-    cur->messages = msg_list;  // cur->messages now owns the msg_list reference
-
-    return 0;
-}
-
-=======
->>>>>>> d58f9df941ad0cfca3e46f8281a679f9c842c336
 static PyObject* execute(Cursor* cur, PyObject* pSql, PyObject* params, bool skip_first)
 {
     // Internal function to execute SQL, called by .execute and .executemany.
