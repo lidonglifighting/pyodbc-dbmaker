@@ -1366,71 +1366,6 @@ class SqlServerTestCase(unittest.TestCase):
         self.assertEqual(t[5], 2)       # scale
         self.assertEqual(t[6], True)    # nullable
 
-    def test_cursor_messages_with_print(self):
-        """
-        Ensure the Cursor.messages attribute is handled correctly with a simple PRINT statement.
-        """
-        # self.cursor is used in setUp, hence is not brand new at this point
-        brand_new_cursor = self.cnxn.cursor()
-        self.assertIsNone(brand_new_cursor.messages)
-
-        # SQL Server PRINT statements are never more than 8000 characters
-        # https://docs.microsoft.com/en-us/sql/t-sql/language-elements/print-transact-sql#remarks
-        for msg in ('hello world', 'ABCDEFGHIJ' * 800):
-            self.cursor.execute("PRINT '{}'".format(msg))
-            messages = self.cursor.messages
-            self.assertTrue(type(messages) is list)
-            self.assertEqual(len(messages), 1)
-            self.assertTrue(type(messages[0]) is tuple)
-            self.assertEqual(len(messages[0]), 2)
-            self.assertTrue(type(messages[0][0]) is str)
-            self.assertTrue(type(messages[0][1]) is str)
-            self.assertEqual('[01000] (0)', messages[0][0])
-            self.assertTrue(messages[0][1].endswith(msg))
-
-    def test_cursor_messages_with_stored_proc(self):
-        """
-        Complex scenario to test the Cursor.messages attribute.
-        """
-        self.cursor.execute("""
-            CREATE OR ALTER PROCEDURE test_cursor_messages AS
-            BEGIN
-                SET NOCOUNT ON;
-                PRINT 'Message 1a';
-                PRINT 'Message 1b';
-                SELECT N'Field 1a' AS F UNION ALL SELECT N'Field 1b';
-                SELECT N'Field 2a' AS F UNION ALL SELECT N'Field 2b';
-                PRINT 'Message 2a';
-                PRINT 'Message 2b';
-            END
-        """)
-        # result set 1
-        self.cursor.execute("EXEC test_cursor_messages")
-        rows = [tuple(r) for r in self.cursor.fetchall()]  # convert pyodbc.Row objects for ease of use
-        self.assertEqual(len(rows), 2)
-        self.assertSequenceEqual(rows, [('Field 1a', ), ('Field 1b', )])
-        self.assertEqual(len(self.cursor.messages), 2)
-        self.assertTrue(self.cursor.messages[0][1].endswith('Message 1a'))
-        self.assertTrue(self.cursor.messages[1][1].endswith('Message 1b'))
-        # result set 2
-        self.assertTrue(self.cursor.nextset())
-        rows = [tuple(r) for r in self.cursor.fetchall()]  # convert pyodbc.Row objects for ease of use
-        self.assertEqual(len(rows), 2)
-        self.assertSequenceEqual(rows, [('Field 2a', ), ('Field 2b', )])
-        self.assertEqual(self.cursor.messages, [])
-        # result set 3
-        self.assertTrue(self.cursor.nextset())
-        with self.assertRaises(pyodbc.ProgrammingError):
-            self.cursor.fetchall()
-        self.assertEqual(len(self.cursor.messages), 2)
-        self.assertTrue(self.cursor.messages[0][1].endswith('Message 2a'))
-        self.assertTrue(self.cursor.messages[1][1].endswith('Message 2b'))
-        # result set 4 (which shouldn't exist)
-        self.assertFalse(self.cursor.nextset())
-        with self.assertRaises(pyodbc.ProgrammingError):
-            self.cursor.fetchall()
-        self.assertEqual(self.cursor.messages, [])
-
     def test_none_param(self):
         "Ensure None can be used for params other than the first"
         # Some driver/db versions would fail if NULL was not the first parameter because SQLDescribeParam (only used
@@ -1545,8 +1480,7 @@ class SqlServerTestCase(unittest.TestCase):
         self.cursor.execute("create table t1(s varchar(800))")
         def test():
             self.cursor.execute("insert into t1 values (?)", value)
-        # different versions of SQL Server generate different errors
-        self.assertRaises((pyodbc.DataError, pyodbc.ProgrammingError), test)
+        self.assertRaises(pyodbc.DataError, test)
 
     def test_geometry_null_insert(self):
         def convert(value):
@@ -1764,8 +1698,8 @@ class SqlServerTestCase(unittest.TestCase):
         result = self.cursor.execute("select s from t1").fetchone()[0]
 
         self.assertEqual(result, v)
-        
-    def test_tvp(self):
+
+    def _test_tvp(self, diff_schema):
         # https://github.com/mkleehammer/pyodbc/issues/290
         #
         # pyodbc supports queries with table valued parameters in sql server
@@ -1775,18 +1709,36 @@ class SqlServerTestCase(unittest.TestCase):
             warn('FREETDS_KNOWN_ISSUE - test_tvp: test cancelled.')
             return
 
+        procname = 'SelectTVP'
+        typename = 'TestTVP'
+
+        if diff_schema:
+            schemaname = 'myschema'
+            procname = schemaname + '.' + procname
+            typenameonly = typename
+            typename = schemaname + '.' + typename
+
         # (Don't use "if exists" since older SQL Servers don't support it.)
         try:
-            self.cursor.execute("drop procedure SelectTVP")
+            self.cursor.execute("drop procedure " + procname)
         except:
             pass
         try:
-            self.cursor.execute("drop type TestTVP")
+            self.cursor.execute("drop type " + typename)
         except:
             pass
+        if diff_schema:
+            try:
+                self.cursor.execute("drop schema " + schemaname)
+            except:
+                pass
         self.cursor.commit()
         
-        query = "CREATE TYPE TestTVP AS TABLE("\
+        if diff_schema:
+            self.cursor.execute("CREATE SCHEMA myschema")
+            self.cursor.commit()
+
+        query = "CREATE TYPE %s AS TABLE("\
                 "c01 VARCHAR(255),"\
                 "c02 VARCHAR(MAX),"\
                 "c03 VARBINARY(255),"\
@@ -1798,11 +1750,11 @@ class SqlServerTestCase(unittest.TestCase):
                 "c09 BIGINT,"\
                 "c10 FLOAT,"\
                 "c11 NUMERIC(38, 24),"\
-                "c12 UNIQUEIDENTIFIER)"
+                "c12 UNIQUEIDENTIFIER)" % typename
 
         self.cursor.execute(query)
         self.cursor.commit()
-        self.cursor.execute("CREATE PROCEDURE SelectTVP @TVP TestTVP READONLY AS SELECT * FROM @TVP;")
+        self.cursor.execute("CREATE PROCEDURE %s @TVP %s READONLY AS SELECT * FROM @TVP;" % (procname, typename))
         self.cursor.commit()
 
         long_string = ''
@@ -1863,7 +1815,10 @@ class SqlServerTestCase(unittest.TestCase):
         success = True
 
         try:
-            result_array = self.cursor.execute("exec SelectTVP ?",[param_array]).fetchall()
+            p1 = [param_array]
+            if diff_schema:
+                p1 = [ [ typenameonly, schemaname ] + param_array ]
+            result_array = self.cursor.execute("exec %s ?" % procname, p1).fetchall()
         except Exception as ex:
             print("Failed to execute SelectTVP")
             print("Exception: [" + type(ex).__name__ + "]" , ex.args)
@@ -1876,16 +1831,28 @@ class SqlServerTestCase(unittest.TestCase):
                         print("Mismatch at row " + str(r+1) + ", column " + str(c+1) + "; expected:", param_array[r][c] , " received:", result_array[r][c])
                         success = False
 
-        try:
-            result_array = self.cursor.execute("exec SelectTVP ?", [[]]).fetchall()
-            self.assertEqual(result_array, [])
-        except Exception as ex:
-            print("Failed to execute SelectTVP")
-            print("Exception: [" + type(ex).__name__ + "]", ex.args)
-            success = False
-
         self.assertEqual(success, True)
-        
+
+    def test_columns(self):
+        self.cursor.execute(
+            """
+            create table t1(n int, d datetime, c nvarchar(100))
+            """)
+
+        self.cursor.columns(table='t1')
+        names = {row.column_name for row in self.cursor.fetchall()}
+        assert names == {'n', 'd', 'c'}, 'names=%r' % names
+
+        self.cursor.columns(table='t1', column='c')
+        row = self.cursor.fetchone()
+        assert row.column_name == 'c'
+
+    def test_tvp(self):
+        self._test_tvp(False)
+
+    def test_tvp_diffschema(self):
+        self._test_tvp(True)
+
 def main():
     from optparse import OptionParser
     parser = OptionParser(usage=usage)
