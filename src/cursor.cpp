@@ -82,7 +82,7 @@ static Cursor* Cursor_Validate(PyObject* obj, DWORD flags)
         if (cursor->hstmt == SQL_NULL_HANDLE)
         {
             if (flags & CURSOR_RAISE_ERROR)
-                PyErr_SetString(ProgrammingError, "Attempt to use a closed cursor.");//Cannot operate on a closed cursor.
+                PyErr_SetString(ProgrammingError, "Attempt to use a closed cursor.");
             return 0;
         }
 
@@ -131,8 +131,6 @@ static bool create_name_map(Cursor* cur, SQLSMALLINT field_count, bool lower)
 
     bool success = false;
     PyObject *desc = 0, *colmap = 0, *colinfo = 0, *type = 0, *index = 0, *nullable_obj=0;
-    SQLSMALLINT nameLen = 300;
-    ODBCCHAR *szName = NULL;
     SQLRETURN ret;
 
     I(cur->hstmt != SQL_NULL_HANDLE && cur->colinfos != 0);
@@ -150,21 +148,20 @@ static bool create_name_map(Cursor* cur, SQLSMALLINT field_count, bool lower)
 
     desc   = PyTuple_New((Py_ssize_t)field_count);
     colmap = PyDict_New();
-    szName = (ODBCCHAR*) pyodbc_malloc((nameLen + 1) * sizeof(ODBCCHAR));
-    if (!desc || !colmap || !szName)
+    if (!desc || !colmap)
         goto done;
 
     for (int i = 0; i < field_count; i++)
     {
+        ODBCCHAR szName[300];
         SQLSMALLINT cchName;
         SQLSMALLINT nDataType;
         SQLULEN nColSize;           // precision
         SQLSMALLINT cDecimalDigits; // scale
         SQLSMALLINT nullable;
 
-        retry:
         Py_BEGIN_ALLOW_THREADS
-        ret = SQLDescribeColW(cur->hstmt, (SQLUSMALLINT)(i + 1), (SQLWCHAR*)szName, nameLen, &cchName, &nDataType, &nColSize, &cDecimalDigits, &nullable);
+        ret = SQLDescribeColW(cur->hstmt, (SQLUSMALLINT)(i + 1), (SQLWCHAR*)szName, _countof(szName), &cchName, &nDataType, &nColSize, &cDecimalDigits, &nullable);
         Py_END_ALLOW_THREADS
 
         if (cur->cnxn->hdbc == SQL_NULL_HANDLE)
@@ -178,16 +175,6 @@ static bool create_name_map(Cursor* cur, SQLSMALLINT field_count, bool lower)
         {
             RaiseErrorFromHandle(cur->cnxn, "SQLDescribeCol", cur->cnxn->hdbc, cur->hstmt);
             goto done;
-        }
-
-        // If needed, allocate a bigger column name message buffer and retry.
-        if (cchName > nameLen - 1) {
-            nameLen = cchName + 1;
-            if (!pyodbc_realloc((BYTE**) &szName, (nameLen + 1) * sizeof(ODBCCHAR))) {
-                PyErr_NoMemory();
-                goto done;
-            }
-            goto retry;
         }
 
         const TextEnc& enc = cur->cnxn->metadata_enc;
@@ -302,7 +289,6 @@ static bool create_name_map(Cursor* cur, SQLSMALLINT field_count, bool lower)
     Py_XDECREF(colmap);
     Py_XDECREF(index);
     Py_XDECREF(colinfo);
-    pyodbc_free(szName);
 
     return success;
 }
@@ -314,6 +300,7 @@ enum free_results_flags
     KEEP_STATEMENT = 0x02,
     FREE_PREPARED  = 0x04,
     KEEP_PREPARED  = 0x08,
+    KEEP_MESSAGES  = 0x10,
 
     STATEMENT_MASK = 0x03,
     PREPARED_MASK  = 0x0C
@@ -379,6 +366,12 @@ static bool free_results(Cursor* self, int flags)
         self->map_name_to_index = 0;
     }
 
+    if ((flags & KEEP_MESSAGES) == 0)
+    {
+        Py_XDECREF(self->messages);
+        self->messages = PyList_New(0);
+    }
+
     self->rowcount = -1;
 
     return true;
@@ -415,11 +408,13 @@ static void closeimpl(Cursor* cur)
     Py_XDECREF(cur->description);
     Py_XDECREF(cur->map_name_to_index);
     Py_XDECREF(cur->cnxn);
+    Py_XDECREF(cur->messages);
 
     cur->pPreparedSQL = 0;
     cur->description = 0;
     cur->map_name_to_index = 0;
     cur->cnxn = 0;
+    cur->messages = 0;
 }
 
 static char close_doc[] =
@@ -577,20 +572,17 @@ static int GetDiagRecs(Cursor* cur)
     SQLSMALLINT iRecNumber = 1;  // the index of the diagnostic records (1-based)
     ODBCCHAR    cSQLState[6];  // five-character SQLSTATE code (plus terminating NULL)
     SQLINTEGER  iNativeError;
-
     SQLSMALLINT iMessageLen = 1023;
     ODBCCHAR    *cMessageText = (ODBCCHAR*) pyodbc_malloc((iMessageLen + 1) * sizeof(ODBCCHAR));
     SQLSMALLINT iTextLength;
 
     SQLRETURN ret;
     char sqlstate_ascii[6] = "";  // ASCII version of the SQLState
-
-
+    
     if (!cMessageText) {
       PyErr_NoMemory();
       return 0;
     }
-
     msg_list = PyList_New(0);
     if (!msg_list)
         return 0;
@@ -665,83 +657,6 @@ static int GetDiagRecs(Cursor* cur)
         iRecNumber++;
     }
     pyodbc_free(cMessageText);
-
-    Py_XDECREF(cur->messages);
-    cur->messages = msg_list;  // cur->messages now owns the msg_list reference
-
-    return 0;
-}
-
-static int GetDiagRecs(Cursor* cur)
-{
-    // Retrieves all diagnostic records from the cursor and assigns them to the "messages" attribute.
-
-    PyObject* msg_list;  // the "messages" as a Python list of diagnostic records
-
-    SQLSMALLINT iRecNumber = 1;  // the index of the diagnostic records (1-based)
-    ODBCCHAR    cSQLState[6];  // five-character SQLSTATE code (plus terminating NULL)
-    SQLINTEGER  iNativeError;
-    ODBCCHAR    cMessageText[10001];  // PRINT statements can be large, hopefully 10K bytes will be enough
-    SQLSMALLINT iTextLength;
-
-    SQLRETURN ret;
-    char sqlstate_ascii[6] = "";  // ASCII version of the SQLState
-
-    msg_list = PyList_New(0);
-    if (!msg_list)
-        return 0;
-
-    for (;;)
-    {
-        cSQLState[0]    = 0;
-        iNativeError    = 0;
-        cMessageText[0] = 0;
-        iTextLength     = 0;
-
-        Py_BEGIN_ALLOW_THREADS
-        ret = SQLGetDiagRecW(
-            SQL_HANDLE_STMT, cur->hstmt, iRecNumber, (SQLWCHAR*)cSQLState, &iNativeError,
-            (SQLWCHAR*)cMessageText, (short)(_countof(cMessageText)-1), &iTextLength
-        );
-        Py_END_ALLOW_THREADS
-        if (!SQL_SUCCEEDED(ret))
-            break;
-
-        cSQLState[5] = 0;  // Not always NULL terminated (MS Access)
-        CopySqlState(cSQLState, sqlstate_ascii);
-        PyObject* msg_class = PyUnicode_FromFormat("[%s] (%ld)", sqlstate_ascii, (long)iNativeError);
-
-        // Default to UTF-16, which may not work if the driver/manager is using some other encoding
-        const char *unicode_enc = cur->cnxn ? cur->cnxn->metadata_enc.name : ENCSTR_UTF16NE;
-        PyObject* msg_value = PyUnicode_Decode(
-            (char*)cMessageText, iTextLength * sizeof(ODBCCHAR), unicode_enc, "strict"
-        );
-        if (!msg_value)
-        {
-            // If the char cannot be decoded, return something rather than nothing.
-            Py_XDECREF(msg_value);
-            msg_value = PyBytes_FromStringAndSize((char*)cMessageText, iTextLength * sizeof(ODBCCHAR));
-        }
-
-        PyObject* msg_tuple = PyTuple_New(2);  // the message as a Python tuple of class and value
-
-        if (msg_class && msg_value && msg_tuple)
-        {
-            PyTuple_SetItem(msg_tuple, 0, msg_class);  // msg_tuple now owns the msg_class reference
-            PyTuple_SetItem(msg_tuple, 1, msg_value);  // msg_tuple now owns the msg_value reference
-
-            PyList_Append(msg_list, msg_tuple);
-            Py_XDECREF(msg_tuple);  // whether PyList_Append succeeds or not
-        }
-        else
-        {
-            Py_XDECREF(msg_class);
-            Py_XDECREF(msg_value);
-            Py_XDECREF(msg_tuple);
-        }
-
-        iRecNumber++;
-    }
 
     Py_XDECREF(cur->messages);
     cur->messages = msg_list;  // cur->messages now owns the msg_list reference
@@ -856,6 +771,11 @@ static PyObject* execute(Cursor* cur, PyObject* pSql, PyObject* params, bool ski
         RaiseErrorFromHandle(cur->cnxn, "SQLExecDirectW", cur->cnxn->hdbc, cur->hstmt);
         FreeParameterData(cur);
         return 0;
+    }
+
+    if (ret == SQL_SUCCESS_WITH_INFO)
+    {
+        GetDiagRecs(cur);
     }
 
     while (ret == SQL_NEED_DATA)
@@ -1604,7 +1524,7 @@ static char statistics_doc[] =
     "Creates a results set of statistics about a single table and the indexes associated with \n"
     "the table by executing SQLStatistics.\n"
     "unique\n"
-    "  If True, only unique indexes are retured.  Otherwise all indexes are returned.\n"
+    "  If True, only unique indexes are returned.  Otherwise all indexes are returned.\n"
     "quick\n"
     "  If True, CARDINALITY and PAGES are returned  only if they are readily available\n"
     "  from the server\n"
@@ -1978,6 +1898,7 @@ static PyObject* Cursor_nextset(PyObject* self, PyObject* args)
         free_results(cur, FREE_STATEMENT | KEEP_PREPARED);
         Py_RETURN_FALSE;
     }
+
     if (!SQL_SUCCEEDED(ret))
     {
         TRACE("nextset: %d not SQL_SUCCEEDED\n", ret);
@@ -2010,6 +1931,17 @@ static PyObject* Cursor_nextset(PyObject* self, PyObject* args)
         Py_RETURN_FALSE;
     }
 
+    // Must retrieve DiagRecs immediately after SQLMoreResults
+    if (ret == SQL_SUCCESS_WITH_INFO)
+    {
+        GetDiagRecs(cur);
+    }
+    else
+    {
+        Py_XDECREF(cur->messages);
+        cur->messages = PyList_New(0);
+    }
+
     SQLSMALLINT cCols;
     Py_BEGIN_ALLOW_THREADS
     ret = SQLNumResultCols(cur->hstmt, &cCols);
@@ -2020,10 +1952,10 @@ static PyObject* Cursor_nextset(PyObject* self, PyObject* args)
         // submitted.  This is not documented, but I've seen it with multiple successful inserts.
 
         PyObject* pError = GetErrorFromHandle(cur->cnxn, "SQLNumResultCols", cur->cnxn->hdbc, cur->hstmt);
-        free_results(cur, FREE_STATEMENT | KEEP_PREPARED);
+        free_results(cur, FREE_STATEMENT | KEEP_PREPARED | KEEP_MESSAGES);
         return pError;
     }
-    free_results(cur, KEEP_STATEMENT | KEEP_PREPARED);
+    free_results(cur, KEEP_STATEMENT | KEEP_PREPARED | KEEP_MESSAGES);
 
     if (cCols != 0)
     {
@@ -2303,6 +2235,10 @@ static char fastexecmany_doc[] =
     "This read/write attribute specifies whether to use a faster executemany() which\n" \
     "uses parameter arrays. Not all drivers may work with this implementation.";
 
+static char messages_doc[] =
+    "This read-only attribute is a list of all the diagnostic messages in the\n" \
+    "current result set.";
+
 static PyMemberDef Cursor_members[] =
 {
     {"rowcount",    T_INT,       offsetof(Cursor, rowcount),        READONLY, rowcount_doc },
@@ -2310,6 +2246,7 @@ static PyMemberDef Cursor_members[] =
     {"arraysize",   T_INT,       offsetof(Cursor, arraysize),       0,        arraysize_doc },
     {"connection",  T_OBJECT_EX, offsetof(Cursor, cnxn),            READONLY, connection_doc },
     {"fast_executemany",T_BOOL,  offsetof(Cursor, fastexecmany),    0,        fastexecmany_doc },
+    {"messages",    T_OBJECT_EX, offsetof(Cursor, messages),        READONLY, messages_doc },
     { 0 }
 };
 
@@ -2598,9 +2535,11 @@ Cursor_New(Connection* cnxn)
         cur->rowcount          = -1;
         cur->map_name_to_index = 0;
         cur->fastexecmany      = 0;
+        cur->messages          = Py_None;
 
         Py_INCREF(cnxn);
         Py_INCREF(cur->description);
+        Py_INCREF(cur->messages);
 
         SQLRETURN ret;
         Py_BEGIN_ALLOW_THREADS

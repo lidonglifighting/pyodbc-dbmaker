@@ -134,7 +134,7 @@ static int DetectCType(PyObject *cell, ParamInfo *pi)
         pi->BufferLength = pi->ColumnSize && PyBuffer_GetMemory(cell, 0) >= 0 ? pi->ColumnSize : sizeof(DAEParam);
     }
 #endif
-    else if (cell == Py_None)
+    else if (cell == Py_None || cell == null_binary)
     {
         // Use the SQL type to guess what Nones should be inserted as here.
         switch (pi->ParameterType)
@@ -407,10 +407,9 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         pts->second = PyDateTime_DATE_GET_SECOND(cell);
 
         // Truncate the fraction according to precision
-        size_t digits = min(9, pi->DecimalDigits);
         long fast_pow10[] = {1,10,100,1000,10000,100000,1000000,10000000,100000000,1000000000};
         SQLUINTEGER milliseconds = PyDateTime_DATE_GET_MICROSECOND(cell) * 1000;
-        pts->fraction = milliseconds - (milliseconds % fast_pow10[9 - digits]);
+        pts->fraction = milliseconds - (milliseconds % fast_pow10[9 - pi->DecimalDigits]);
 
         *outbuf += sizeof(SQL_TIMESTAMP_STRUCT);
         ind = sizeof(SQL_TIMESTAMP_STRUCT);
@@ -588,7 +587,7 @@ static int PyToCType(Cursor *cur, unsigned char **outbuf, PyObject *cell, ParamI
         *outbuf += pi->BufferLength;
         ind = sizeof(SQL_NUMERIC_STRUCT);
     }
-    else if (cell == Py_None)
+    else if (cell == Py_None || cell == null_binary)
     {
         *outbuf += pi->BufferLength;
         ind = SQL_NULL_DATA;
@@ -1190,13 +1189,11 @@ static bool GetTableInfo(Cursor *cur, Py_ssize_t index, PyObject* param, ParamIn
         Py_XDECREF(cell0);
         if (PyBytes_Check(cell0) || PyUnicode_Check(cell0))
         {
+            SQLHDESC desc;
+            PyObject *tvpname = PyCodec_Encode(cell0, "UTF-16LE", 0);
+            SQLGetStmtAttr(cur->hstmt, SQL_ATTR_IMP_PARAM_DESC, &desc, 0, 0);
+            SQLSetDescFieldW(desc, index + 1, SQL_CA_SS_TYPE_NAME, (SQLPOINTER)PyBytes_AsString(tvpname), PyBytes_Size(tvpname));
             nskip++;
-            if (nrows > 1)
-            {
-                PyObject *cell1 = PySequence_GetItem(param, 1);
-                Py_XDECREF(cell1);
-                nskip += (PyBytes_Check(cell1) || PyUnicode_Check(cell1));
-            }
         }
     }
     nrows -= nskip;
@@ -1447,33 +1444,6 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
     // This is a TVP. Enter and bind its parameters, allocate descriptors for its columns (all as DAE)
     if (sqltype == SQL_SS_TABLE)
     {
-        Py_ssize_t nrows = PySequence_Size(info.pObject);
-        if (nrows > 0)
-        {
-            PyObject *cell0 = PySequence_GetItem(info.pObject, 0);
-            Py_XDECREF(cell0);
-            if (PyBytes_Check(cell0) || PyUnicode_Check(cell0))
-            {
-                SQLHDESC desc;
-                PyObject *tvpname = PyCodec_Encode(cell0, "UTF-16LE", 0);
-                SQLGetStmtAttr(cur->hstmt, SQL_ATTR_IMP_PARAM_DESC, &desc, 0, 0);
-                SQLSetDescFieldW(desc, index + 1, SQL_CA_SS_TYPE_NAME, (SQLPOINTER)PyBytes_AsString(tvpname), PyBytes_Size(tvpname));
-                Py_XDECREF(tvpname);
-
-                if (nrows > 1)
-                {
-                    PyObject *cell1 = PySequence_GetItem(info.pObject, 1);
-                    Py_XDECREF(cell1);
-                    if (PyBytes_Check(cell1) || PyUnicode_Check(cell1))
-                    {
-                        PyObject *tvpschema = PyCodec_Encode(cell1, "UTF-16LE", 0);
-                        SQLSetDescFieldW(desc, index + 1, SQL_CA_SS_SCHEMA_NAME, (SQLPOINTER)PyBytes_AsString(tvpschema), PyBytes_Size(tvpschema));
-                        Py_XDECREF(tvpschema);
-                    }
-                }
-            }
-        }
-
         SQLHDESC desc;
         SQLGetStmtAttr(cur->hstmt, SQL_ATTR_APP_PARAM_DESC, &desc, 0, 0);
         SQLSetDescField(desc, index + 1, SQL_DESC_DATA_PTR, (SQLPOINTER)info.ParameterValuePtr, 0);
@@ -1488,7 +1458,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
 
         Py_ssize_t i = PySequence_Size(info.pObject) - info.ColumnSize;
         Py_ssize_t ncols = 0;
-        while (i < PySequence_Size(info.pObject))
+        while (i >= 0 && i < PySequence_Size(info.pObject))
         {
             PyObject *row = PySequence_GetItem(info.pObject, i);
             Py_XDECREF(row);
@@ -1511,6 +1481,7 @@ bool BindParameter(Cursor* cur, Py_ssize_t index, ParamInfo& info)
         {
             // TVP has no columns --- is null
             info.nested = 0;
+            info.StrLen_or_Ind = SQL_DEFAULT_PARAM;
         }
         else
         {
@@ -2039,6 +2010,11 @@ bool ExecuteMulti(Cursor* cur, PyObject* pSql, PyObject* paramArrayObj)
                         offset += remaining;
                     }
                     while (offset < cb);
+
+                    if (PyUnicode_Check(pInfo->cell) && PyBytes_Check(objCell))
+                    {
+                        Py_XDECREF(objCell);
+                    }
                 }
     #if PY_MAJOR_VERSION < 3
                 else if (PyBuffer_Check(objCell))

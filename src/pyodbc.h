@@ -89,14 +89,6 @@ typedef int Py_ssize_t;
 #define SQL_CA_SS_TYPE_NAME 1227
 #endif
 
-#ifndef SQL_CA_SS_SCHEMA_NAME
-#define SQL_CA_SS_SCHEMA_NAME 1226
-#endif
-
-#ifndef SQL_CA_SS_CATALOG_NAME
-#define SQL_CA_SS_CATALOG_NAME 1225
-#endif
-
 inline bool IsSet(DWORD grf, DWORD flags)
 {
     return (grf & flags) == flags;
@@ -163,7 +155,12 @@ inline void DebugTrace(const char* szFmt, ...) { UNUSED(szFmt); }
 #define pyodbc_free free
 // #endif
 
-bool pyodbc_realloc(BYTE** pp, size_t len);
+// issue #880: entry missing from iODBC sqltypes.h
+#ifndef BYTE
+  typedef unsigned char   BYTE;
+#endif
+bool pyodbc_realloc(BYTE** pp, size_t newlen);
+
 // A wrapper around realloc with a safer interface.  If it is successful, *pp is updated to the
 // new pointer value.  If not successful, it is not modified.  (It is easy to forget and lose
 // the old pointer value with realloc.)
