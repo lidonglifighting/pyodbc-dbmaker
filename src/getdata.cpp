@@ -10,7 +10,6 @@
 #include "connection.h"
 #include "errors.h"
 #include "dbspecific.h"
-#include <time.h>
 #include <datetime.h>
 
 // NULL terminator notes:
@@ -617,7 +616,6 @@ static PyObject* GetDataTimestamp(Cursor* cur, Py_ssize_t iCol)
 
     SQLLEN cbFetched = 0;
     SQLRETURN ret;
-
     struct tm t;
 
     Py_BEGIN_ALLOW_THREADS
@@ -642,7 +640,6 @@ static PyObject* GetDataTimestamp(Cursor* cur, Py_ssize_t iCol)
     }
 
     int micros = (int)(value.fraction / 1000); // nanos --> micros
-
     if (value.hour == 24) {  // some backends support 24:00 (hh:mm) as "end of a day"
         t.tm_year = value.year - 1900;  // tm_year is 1900-based
         t.tm_mon = value.month - 1;  // tm_mon is zero-based
@@ -655,7 +652,6 @@ static PyObject* GetDataTimestamp(Cursor* cur, Py_ssize_t iCol)
             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, micros
         );
     }
-
     return PyDateTime_FromDateAndTime(value.year, value.month, value.day, value.hour, value.minute, value.second, micros);
 }
 

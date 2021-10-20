@@ -875,7 +875,29 @@ class DBMakerTestCase(unittest.TestCase):
         result = self.cursor.execute("select s from t1").fetchone()[0]
 
         self.assertEqual(result, v)
-  
+
+    def test_GBK_varchar_parameter(self):
+       
+        v = '我的'
+
+        self.cursor.execute("CREATE TABLE t1(s varchar(100))")
+        self.cursor.execute("insert into t1 values (?)", v)
+
+        result = self.cursor.execute("select s from t1").fetchone()[0]
+
+        self.assertEqual(result, v)
+
+    def test_GBK_varchar_literal(self):
+
+        v = '我的'
+
+        self.cursor.execute("CREATE TABLE t1(s varchar(100))")
+        self.cursor.execute("insert into t1 values ('%s')" % v)
+
+        result = self.cursor.execute("select s from t1").fetchone()[0]
+
+        self.assertEqual(result, v)
+   
     def test_cursorcommit(self):
         "Ensure cursor.commit works"
         othercnxn = pyodbc.connect(self.connection_string)

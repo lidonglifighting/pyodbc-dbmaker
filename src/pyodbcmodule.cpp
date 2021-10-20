@@ -625,11 +625,7 @@ static PyObject* mod_datasources(PyObject* self)
 
     for (;;)
     {
-        Py_BEGIN_ALLOW_THREADS
         ret = SQLDataSources(henv, nDirection, szDSN,  _countof(szDSN),  &cbDSN, szDesc, _countof(szDesc), &cbDesc);
-        Py_END_ALLOW_THREADS
-        if (!cbDSN || !cbDesc)
-            ret = SQL_NO_DATA;
         if (!SQL_SUCCEEDED(ret))
             break;
 
