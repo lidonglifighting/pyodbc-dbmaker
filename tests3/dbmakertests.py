@@ -853,50 +853,6 @@ class DBMakerTestCase(unittest.TestCase):
         result = self.cursor.execute("select s from t1").fetchone()[0]
 
         self.assertEqual(result, v)
-  
-    def test_GBK_nvarchar_parameter(self):
-       
-        v = '我的'
-
-        self.cursor.execute("CREATE TABLE t1(s nvarchar(100))")
-        self.cursor.execute("insert into t1 values (?)", v)
-
-        result = self.cursor.execute("select s from t1").fetchone()[0]
-
-        self.assertEqual(result, v)
-
-    def test_GBK_nvarchar_literal(self):
-
-        v = '我的'
-
-        self.cursor.execute("CREATE TABLE t1(s nvarchar(100))")
-        self.cursor.execute("insert into t1 values ('%s')" % v)
-
-        result = self.cursor.execute("select s from t1").fetchone()[0]
-
-        self.assertEqual(result, v)
-
-    def test_GBK_varchar_parameter(self):
-       
-        v = '我的'
-
-        self.cursor.execute("CREATE TABLE t1(s varchar(100))")
-        self.cursor.execute("insert into t1 values (?)", v)
-
-        result = self.cursor.execute("select s from t1").fetchone()[0]
-
-        self.assertEqual(result, v)
-
-    def test_GBK_varchar_literal(self):
-
-        v = '我的'
-
-        self.cursor.execute("CREATE TABLE t1(s varchar(100))")
-        self.cursor.execute("insert into t1 values ('%s')" % v)
-
-        result = self.cursor.execute("select s from t1").fetchone()[0]
-
-        self.assertEqual(result, v)
    
     def test_cursorcommit(self):
         "Ensure cursor.commit works"
@@ -1010,6 +966,48 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertEqual(t[4], 5)       # precision
         self.assertEqual(t[5], 2)       # scale
         self.assertEqual(t[6], True)    # nullable
+
+    def test_cursor_messages_with_sql(self):
+        """
+        Ensure the Cursor.messages attribute is handled correctly with a simple PRINT statement.
+        """
+        # self.cursor is used in setUp, hence is not brand new at this point
+        brand_new_cursor = self.cnxn.cursor()
+        self.assertIsNone(brand_new_cursor.messages)
+
+        self.cursor.execute("create table t1(n int, s char(10))")
+        self.cursor.execute("insert into t1 values(1,'lindalindaa')")
+        messages = self.cursor.messages
+        self.assertTrue(type(messages) is list)
+        self.assertEqual(len(messages), 1)
+        self.assertTrue(type(messages[0]) is tuple)
+        self.assertEqual(len(messages[0]), 2)
+        self.assertTrue(type(messages[0][0]) is str)
+        self.assertTrue(type(messages[0][1]) is str)
+        self.assertEqual('[01004] (63)', messages[0][0])
+        self.assertTrue(messages[0][1].endswith("[DBMaker] data truncated when converting from different type"))
+
+    def test_cursor_messages_with_stored_proc(self):
+        """
+        Complex scenario to test the Cursor.messages attribute.
+        """
+        self.cursor.execute("""
+            CREATE OR REPLACE PROCEDURE test_cursor_messages language sql
+            BEGIN
+               create table t1(n int, s char(10));
+               insert into t1 values(1,'lindalindaa');
+            END
+        """)
+        self.cursor.execute("call test_cursor_messages")
+        messages = self.cursor.messages
+        self.assertTrue(type(messages) is list)
+        self.assertEqual(len(messages), 1)
+        self.assertTrue(type(messages[0]) is tuple)
+        self.assertEqual(len(messages[0]), 2)
+        self.assertTrue(type(messages[0][0]) is str)
+        self.assertTrue(type(messages[0][1]) is str)
+        self.assertEqual('[01004] (63)', messages[0][0])
+        self.assertTrue(messages[0][1].endswith("[DBMaker] data truncated when converting from different type"))
 
     def test_output_conversion(self):
         def convert(value):
@@ -1146,6 +1144,11 @@ class DBMakerTestCase(unittest.TestCase):
         value = self.cursor.execute("select ?", None).fetchone()[0]
         self.assertEqual(value, None)
 
+    def test_large_update_nodata(self):
+        self.cursor.execute('create table t1(a blob)')
+        hundredkb = b'x'*100*1024
+        self.cursor.execute('update t1 set a=? where 1=0', (hundredkb,))
+
     def test_no_fetch(self):
         # Issue 89 with FreeTDS: Multiple selects (or catalog functions that issue selects) without fetches seem to
         # confuse the driver.
@@ -1153,6 +1156,125 @@ class DBMakerTestCase(unittest.TestCase):
         self.cursor.execute('select 1')
         self.cursor.execute('select 1')
 
+    def test_decode_meta(self):
+        """
+        Ensure column names with non-ASCII characters are converted using the configured encodings.
+        """
+        # This is from GitHub issue #190
+        self.cursor.execute("create table t1(a int)")
+        self.cursor.execute("insert into t1 values (1)")
+        self.cursor.execute('select a as "Tipolog铆a" from t1')
+        self.assertEqual(self.cursor.description[0][0], "TIPOLOG铆A")
+
+    def test_exc_integrity(self):
+        "Make sure an IntegretyError is raised"
+        # This is really making sure we are properly encoding and comparing the SQLSTATEs.
+        self.cursor.execute("create table t1(s1 varchar(10) primary key)")
+        self.cursor.execute("insert into t1 values ('one')")
+        self.assertRaises(pyodbc.IntegrityError, self.cursor.execute, "insert into t1 values ('one')")
+
+    def test_columns(self):
+        # When using aiohttp, `await cursor.primaryKeys('t1')` was raising the error
+        #
+        #   Error: TypeError: argument 2 must be str, not None
+        #
+        # I'm not sure why, but PyArg_ParseTupleAndKeywords fails if you use "|s" for an
+        # optional string keyword when calling indirectly.
+
+        self.cursor.execute("create table t1(a int, b varchar(3), x螐z varchar(4))")
+
+        self.cursor.columns('t1')
+        results = {row.column_name: row for row in self.cursor}
+        row = results['a']
+        assert row.type_name == 'int', row.type_name
+        row = results['b']
+        assert row.type_name == 'varchar'
+        assert row.column_size == 3
+
+        # Now do the same, but specifically pass in None to one of the keywords.  Old versions
+        # were parsing arguments incorrectly and would raise an error.  (This crops up when
+        # calling indirectly like columns(*args, **kwargs) which aiodbc does.)
+
+        self.cursor.columns('t1', schema=None, catalog=None)
+        results = {row.column_name: row for row in self.cursor}
+        row = results['a']
+        assert row.type_name == 'int', row.type_name
+        row = results['b']
+        assert row.type_name == 'varchar'
+        assert row.column_size == 3
+        row = results['x螐z']
+        assert row.type_name == 'varchar'
+        assert row.column_size == 4, row.column_size
+
+        # <test null termination fix (issue #506)>
+        for i in range(8, 16):
+            table_name = 'pyodbc_89abcdef'[:i]
+
+            self.cursor.execute("""\
+            IF OBJECT_ID (N'{0}', N'U') IS NOT NULL DROP TABLE {0};
+            CREATE TABLE {0} (id INT PRIMARY KEY);
+            """.format(table_name))
+
+            col_count = len([col.column_name for col in self.cursor.columns(table_name)])
+            # print('table [{}] ({} characters): {} columns{}'.format(table_name, i, col_count, ' <-' if col_count == 0 else ''))
+            self.assertEqual(col_count, 1)
+
+            self.cursor.execute("DROP TABLE {};".format(table_name))
+        # </test null termination fix (issue #506)>
+
+    def test_cancel(self):
+        # I'm not sure how to reliably cause a hang to cancel, so for now we'll settle with
+        # making sure SQLCancel is called correctly.
+        self.cursor.execute("select 1")
+        self.cursor.cancel()
+
+    def test_emoticons_as_parameter(self):
+        # https://github.com/mkleehammer/pyodbc/issues/423
+        #
+        # When sending a varchar parameter, pyodbc is supposed to set ColumnSize to the number
+        # of characters.  Ensure it works even with 4-byte characters.
+        #
+        # http://www.fileformat.info/info/unicode/char/1f31c/index.htm
+
+        v = "x \U0001F31C z"
+
+        self.cursor.execute("create table t1(s nvarchar(100))")
+        self.cursor.execute("insert into t1 values (?)", v)
+
+        result = self.cursor.execute("select s from t1").fetchone()[0]
+
+        self.assertEqual(result, v)
+
+    def test_emoticons_as_literal(self):
+        # similar to `test_emoticons_as_parameter`, above, except for Unicode literal
+        #
+        # http://www.fileformat.info/info/unicode/char/1f31c/index.htm
+
+        # FreeTDS ODBC issue fixed in version 1.1.23
+        # https://github.com/FreeTDS/freetds/issues/317
+
+        v = "x \U0001F31C z"
+
+        self.cursor.execute("create table t1(s nvarchar(100))")
+        self.cursor.execute("insert into t1 values (N'%s')" % v)
+
+        result = self.cursor.execute("select s from t1").fetchone()[0]
+
+        self.assertEqual(result, v)
+
+    def test_columns(self):
+        self.cursor.execute(
+            """
+            create table t1(n int, d timestamp, c nvarchar(100))
+            """)
+
+        self.cursor.columns(table='t1')
+        names = {row.column_name for row in self.cursor.fetchall()}
+        assert names == {'N', 'D', 'C'}, 'names=%r' % names
+
+        self.cursor.columns(table='t1', column='c')
+        row = self.cursor.fetchone()
+        assert row.column_name == 'C'
 
 def main():
     from optparse import OptionParser
