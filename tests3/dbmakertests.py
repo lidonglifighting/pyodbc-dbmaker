@@ -49,8 +49,8 @@ class DBMakerTestCase(unittest.TestCase):
     LARGE_FENCEPOST_SIZES = [ 4095, 4096, 4097, 10 * 1024, 20 * 1024 ]
 
     ANSI_FENCEPOSTS    = [ _generate_test_string(size) for size in SMALL_FENCEPOST_SIZES ]
-    UNICODE_FENCEPOSTS = [ str(s) for s in ANSI_FENCEPOSTS ]
-    BLOB_FENCEPOSTS   = ANSI_FENCEPOSTS + [ _generate_test_string(size) for size in LARGE_FENCEPOST_SIZES ]
+    BYTE_FENCEPOSTS    = [ bytes(s, 'ascii') for s in ANSI_FENCEPOSTS ]
+    BLOB_FENCEPOSTS   = BYTE_FENCEPOSTS + [ bytes(_generate_test_string(size), 'ascii') for size in LARGE_FENCEPOST_SIZES ]
 
     def __init__(self, method_name, connection_string):
         unittest.TestCase.__init__(self, method_name)
@@ -61,7 +61,9 @@ class DBMakerTestCase(unittest.TestCase):
         self.cursor = self.cnxn.cursor()
         
         self.cnxn.setdecoding(pyodbc.SQL_CHAR, encoding = 'utf-8')
-
+        #self.cnxn.setdecoding(pyodbc.SQL_WCHAR, encoding = 'utf-16')
+        #self.cnxn.setdecoding(pyodbc.SQL_WMETADATA, encoding = 'utf16-le')
+        #self.cnxn.setencoding(encoding='utf-8')
         # As of DBMaker SQLGetTypeInfo returns absurdly small sizes leading
         # to slow writes.  Override them:
         self.cnxn.maxwrite = 1024 * 1024 * 1024
@@ -129,6 +131,23 @@ class DBMakerTestCase(unittest.TestCase):
     def test_getinfo_smallint(self):
         value = self.cnxn.getinfo(pyodbc.SQL_CONCAT_NULL_BEHAVIOR)
         self.assertTrue(isinstance(value, int))
+    ##dbmaker always get it True
+    def test_noscan(self):
+        self.assertEqual(self.cursor.noscan, True)
+        self.cursor.noscan = True
+        self.assertEqual(self.cursor.noscan, True)
+    ##dbmaker do not support batches of statements, just one stmt in it
+    def test_nextset(self):
+        self.cursor.execute("create table t1(i int)")
+        for i in range(4):
+            self.cursor.execute("insert into t1(i) values(?)", i)
+
+        self.cursor.execute("select i from t1 where i < 2 order by i")
+
+        for i, row in enumerate(self.cursor):
+            self.assertEqual(i, row.I)
+
+        self.assertEqual(self.cursor.nextset(), False)
 
     def test_fixed_unicode(self):
         value = "t\xebsting"
@@ -150,14 +169,14 @@ class DBMakerTestCase(unittest.TestCase):
         else:
             sql = "create table t1(s %s)" % sqltype
 
-        print("sql:%s"%sql)
+        #print("sql:%s"%sql)
         try:
             self.cursor.execute(sql)
         except:
             print ('>>>>', sql)
-        print("sql:insert into t1 values")
+        #print("sql:insert into t1 values")
         self.cursor.execute("insert into t1 values(?)", value)
-        print("sql:select * from t1")
+        #print("sql:select * from t1")
         v = self.cursor.execute("select * from t1").fetchone()[0]
 
         # Removing this check for now until I get the charset working properly.
@@ -185,9 +204,6 @@ class DBMakerTestCase(unittest.TestCase):
     for value in ANSI_FENCEPOSTS:
         locals()['test_varchar_%s' % len(value)] = _maketest(value)
 
-    # Generate a test using Unicode.
-    for value in UNICODE_FENCEPOSTS:
-        locals()['test_wvarchar_%s' % len(value)] = _maketest(value)
 
     def test_varchar_many(self):
         self.cursor.execute("create table t1(c1 varchar(300), c2 varchar(300), c3 varchar(300))")
@@ -202,7 +218,23 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertEqual(v1, row.C1)
         self.assertEqual(v2, row.C2)
         self.assertEqual(v3, row.C3)
-    
+
+   
+    #
+    # unicode
+    #
+
+    def test_unicode_null(self):
+        self._test_strtype('nvarchar', None, colsize=100)
+
+    # Generate a test for each fencepost size: test_unicode_0, etc.
+    def _maketest(value):
+        def t(self):
+            self._test_strtype('nvarchar', value, colsize=len(value))
+        return t
+    for value in ANSI_FENCEPOSTS:
+        locals()['test_unicode_%s' % len(value)] = _maketest(value)
+   
     def test_chinese(self):
         v = '我的'
         self.cursor.execute("SELECT N'我的' AS name")
@@ -212,6 +244,32 @@ class DBMakerTestCase(unittest.TestCase):
         self.cursor.execute("SELECT N'我的' AS name")
         rows = self.cursor.fetchall()
         self.assertEqual(rows[0][0], v)
+
+    def test_fast_executemany_to_unicode(self):
+        v = 'Ώπα'
+        self.cursor.execute("CREATE TABLE t1 (id serial PRIMARY KEY, txt NVARCHAR(50))")
+        sql = "INSERT INTO t1 (txt) VALUES (?)"
+        params = [(v,)]
+        self.cursor.setinputsizes([(pyodbc.SQL_WVARCHAR, 50, 0)])
+        self.cursor.fast_executemany = True
+        self.cursor.executemany(sql, params)
+        self.assertEqual(self.cursor.execute("SELECT txt FROM t1").fetchval(), v)
+
+    def test_fast_executemany_to_timestamp(self):
+        v = datetime(2019, 3, 12, 10, 0, 0, 123456)
+        self.cursor.execute("CREATE TABLE t1 (dt2 timestamp)")
+        sql = "INSERT INTO t1 (dt2) VALUES (?)"
+        params = [(v,)]
+        self.cursor.fast_executemany = True
+        self.cursor.executemany(sql, params)
+        self.assertEqual(self.cursor.execute("SELECT CAST(dt2 AS VARCHAR(32)) FROM t1").fetchval(), '2019-03-12 10:00:00')
+       
+    def test_fast_executemany_high_unicode(self):
+        v = "🎥"
+        self.cursor.fast_executemany = True
+        self.cursor.execute("CREATE TABLE t1 (col1 nvarchar(32) null)")
+        self.cursor.executemany("INSERT INTO t1 (col1) VALUES (?)", [[v,]])
+        self.assertEqual(self.cursor.execute("SELECT * FROM t1").fetchone()[0], v)
     
     #
     # binary
@@ -227,15 +285,24 @@ class DBMakerTestCase(unittest.TestCase):
     def test_binaryNull_object(self):
         self.cursor.execute("create table t1(n binary(10))")
         self.cursor.execute("insert into t1 values (?)", pyodbc.BinaryNull);
-
+    
     # Generate a test for each fencepost size: test_binary_0, etc.
+    # bytearray
     def _maketest(value):
         def t(self):
-            self._test_strtype('binary', bytearray(value, 'utf-8'), max(1, len(value)))
+            self._test_strtype('binary', bytearray(value), max(1, len(value)))
         return t
-    for value in ANSI_FENCEPOSTS:
-        locals()['test_binary_%s' % len(value)] = _maketest(value)
+    for value in BYTE_FENCEPOSTS:
+        locals()['test_binary_bytearray_%s' % len(value)] = _maketest(value)
 
+    # bytes
+
+    def _maketest(value):
+        def t(self):
+            self._test_strtype('binary', bytes(value), max(1, len(value)))
+        return t
+    for value in BYTE_FENCEPOSTS:
+        locals()['test_binary_bytes_%s' % len(value)] = _maketest(value)
     #
     # blob
     #
@@ -244,13 +311,24 @@ class DBMakerTestCase(unittest.TestCase):
         self._test_strtype('blob', None)
 
     # Generate a test for each fencepost size: test_blob_0, etc.
+    # bytearray
+
     def _maketest(value):
         def t(self):
-            self._test_strtype('blob', bytearray(value, 'utf-8'))
+            self._test_strtype('blob', bytearray(value))
         return t
     for value in BLOB_FENCEPOSTS:
-        locals()['test_blob_%s' % len(value)] = _maketest(value)
+        locals()['test_image_bytearray_%s' % len(value)] = _maketest(value)
 
+    # bytes
+
+    def _maketest(value):
+        def t(self):
+            self._test_strtype('blob', bytes(value))
+        return t
+    for value in BLOB_FENCEPOSTS:
+        locals()['test_image_bytes_%s' % len(value)] = _maketest(value)
+    
     def test_blob_upperlatin(self):
         self._test_strtype('blob', bytearray('á','utf-8'))
 
@@ -270,66 +348,56 @@ class DBMakerTestCase(unittest.TestCase):
         locals()['test_clob_%s' % len(value)] = _maketest(value)
 
 
-    #
-    # unicode
-    #
 
-    def test_unicode_null(self):
-        self._test_strtype('nvarchar', None, colsize=100)
-
-    # Generate a test for each fencepost size: test_unicode_0, etc.
-    def _maketest(value):
-        def t(self):
-            self._test_strtype('nvarchar', value, colsize=len(value))
-        return t
-    for value in UNICODE_FENCEPOSTS:
-        locals()['test_unicode_%s' % len(value)] = _maketest(value)
-
-    #
-    # bit
-    #
-
-    # def test_bit(self):
-    #     value = True
-    #     self.cursor.execute("create table t1(b bit)")
-    #     self.cursor.execute("insert into t1 values (?)", value)
-    #     v = self.cursor.execute("select b from t1").fetchone()[0]
-    #     self.assertEqual(type(v), bool)
-    #     self.assertEqual(v, value)
     
     #
     # decimal
     #
+    
+    def _decimal(self, precision, scale, negative):
+        # From test provided by planders (thanks!) in Issue 91
 
-    def test_small_decimal(self):
-        # value = Decimal('1234567890987654321')
-        value = Decimal('100010')       # (I use this because the ODBC docs tell us how the bytes should look in the C struct)
-        self.cursor.execute("create table t1(d numeric(19))")
+        self.cursor.execute("create table t1(d decimal(%s, %s))" % (precision, scale))
+        # Construct a decimal that uses the maximum precision and scale.
+        decStr = '9' * (precision - scale)
+        if scale:
+            decStr = decStr + "." + '9' * scale
+        if negative:
+            decStr = "-" + decStr
+
+        value = Decimal(decStr)
+
         self.cursor.execute("insert into t1 values(?)", value)
-        v = self.cursor.execute("select * from t1").fetchone()[0]
-        self.assertEqual(type(v), Decimal)
+
+        v = self.cursor.execute("select d from t1").fetchone()[0]
         self.assertEqual(v, value)
 
+    def _maketest(p, s, n):
+        def t(self):
+            self._decimal(p, s, n)
+        return t
+    for (p, s, n) in [ (1,  0,  False),
+                       (1,  0,  True),
+                       (6,  0,  False),
+                       (6,  2,  False),
+                       (6,  4,  True),
+                       (6,  6,  True),
+                       (38, 0,  False),
+                       (38, 10, False),
+                       (38, 38, False),
+                       (38, 0,  True),
+                       (38, 10, True),
+                       (38, 38, True) ]:
+        locals()['test_decimal_%s_%s_%s' % (p, s, n and 'n' or 'p')] = _maketest(p, s, n)
 
-    def test_small_decimal_scale(self):
-        # The same as small_decimal, except with a different scale.  This value exactly matches the ODBC documentation
-        # example in the C Data Types appendix.
-        value = '1000.10'
-        value = Decimal(value)
-        self.cursor.execute("create table t1(d numeric(20,6))")
-        self.cursor.execute("insert into t1 values(?)", value)
-        v = self.cursor.execute("select * from t1").fetchone()[0]
-        self.assertEqual(type(v), Decimal)
-        self.assertEqual(v, value)
 
-
-    def test_negative_decimal_scale(self):
-        value = Decimal('-10.0010')
-        self.cursor.execute("create table t1(d numeric(19,4))")
-        self.cursor.execute("insert into t1 values(?)", value)
-        v = self.cursor.execute("select * from t1").fetchone()[0]
-        self.assertEqual(type(v), Decimal)
-        self.assertEqual(v, value)
+    def test_decimal_e(self):
+        """Ensure exponential notation decimals are properly handled"""
+        value = Decimal((0, (1, 2, 3), 5)) # prints as 1.23E+7
+        self.cursor.execute("create table t1(d decimal(10, 2))")
+        self.cursor.execute("insert into t1 values (?)", value)
+        result = self.cursor.execute("select * from t1").fetchone()[0]
+        self.assertEqual(result, value)
 
     def test_subquery_params(self):
         """Ensure parameter markers work in a subquery"""
@@ -367,21 +435,34 @@ class DBMakerTestCase(unittest.TestCase):
     def test_empty_string(self):
         self.cursor.execute("create table t1(s varchar(20))")
         self.cursor.execute("insert into t1 values(?)", "")
+    
+    def test_empty_string_encoding(self):
+        self.cnxn.setdecoding(pyodbc.SQL_CHAR, encoding='shift_jis')
+        value = ""
+        self.cursor.execute("create table t1(s varchar(20))")
+        self.cursor.execute("insert into t1 values(?)", value)
+        v = self.cursor.execute("select * from t1").fetchone()[0]
+        self.assertEqual(v, value)
 
     def test_fixed_str(self):
         value = "testing"
         self.cursor.execute("create table t1(s char(7))")
-        self.cursor.execute("insert into t1 values(?)", "testing")
+        self.cursor.execute("insert into t1 values(?)", value)
         v = self.cursor.execute("select * from t1").fetchone()[0]
         self.assertEqual(v, value)
 
     def test_empty_unicode(self):
         self.cursor.execute("create table t1(s nvarchar(20))")
-        self.cursor.execute("insert into t1 values(?)", u"")
-
-    def test_unicode_query(self):
-        self.cursor.execute(u"select 1")
-
+        self.cursor.execute("insert into t1 values(?)", "")
+    
+    def test_empty_unicode_encoding(self):
+        self.cnxn.setdecoding(pyodbc.SQL_CHAR, encoding='shift_jis')
+        value = ""
+        self.cursor.execute("create table t1(s nvarchar(20))")
+        self.cursor.execute("insert into t1 values(?)", value)
+        v = self.cursor.execute("select * from t1").fetchone()[0]
+        self.assertEqual(v, value)
+    
     def test_negative_row_index(self):
         self.cursor.execute("create table t1(s varchar(20))")
         self.cursor.execute("insert into t1 values(?)", "1")
@@ -419,9 +500,6 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertEqual(result, value)
 
     def test_datetime_fraction_rounded(self):
-        # SQL Server supports milliseconds, but Python's datetime supports nanoseconds.  pyodbc rounds down to what the
-        # database supports.
-
         full    = datetime(2007, 1, 15, 3, 4, 5, 123456)
         rounded = datetime(2007, 1, 15, 3, 4, 5, 123000)
      
@@ -485,6 +563,15 @@ class DBMakerTestCase(unittest.TestCase):
         self.cursor.execute("insert into t1 values (?)", input)
         result = self.cursor.execute("select d from t1").fetchone()[0]
         self.assertEqual(result, input)
+    
+    def test_overflow_int(self):
+        # python allows integers of any size, bigger than an 8 byte int can contain
+        input = 9999999999999999999999999999999999999
+        self.cursor.execute("create table t1(d bigint)")
+        self.cnxn.commit()
+        self.assertRaises(OverflowError, self.cursor.execute, "insert into t1 values (?)", input)
+        result = self.cursor.execute("select * from t1").fetchall()
+        self.assertEqual(result, [])
 
     def test_float(self):
         value = 1234.5
@@ -500,6 +587,78 @@ class DBMakerTestCase(unittest.TestCase):
         result  = self.cursor.execute("select n from t1").fetchone()[0]
         self.assertEqual(value, result)
     
+    def test_non_numeric_float(self):
+        self.cursor.execute("create table t1(d float)")
+        self.cnxn.commit()
+        for input in (float('+Infinity'), float('-Infinity'), float('NaN')):
+            self.assertRaises(pyodbc.Error, self.cursor.execute, "insert into t1 values (?)", input)
+        result = self.cursor.execute("select * from t1").fetchall()
+        self.assertEqual(result, [])
+    #
+    # stored procedures
+    #
+
+    # def test_callproc(self):
+    #     "callproc with a simple input-only stored procedure"
+    #     pass
+    #limit 1 can not fetch tuple: bug
+    def test_sp_results(self):
+        self.cursor.execute(
+            """
+            Create or replace procedure proc1 language sql
+            begin
+              DECLARE cur1 CURSOR WITH RETURN FOR select user_name, login_time from sysuser limit 2;
+              OPEN cur1;
+            end
+            """)
+        rows = self.cursor.execute("call proc1").fetchall()
+        self.assertEqual(type(rows), list)
+        self.assertEqual(len(rows), 2) # there has to be at least 10 items in sysobjects
+        self.assertEqual(type(rows[0].LOGIN_TIME), str)
+
+
+    def test_sp_results_from_temp(self):
+
+        # Note: I've used "set nocount on" so that we don't get the number of rows deleted from #tmptable.
+        # If you don't do this, you'd need to call nextset() once to skip it.
+
+        self.cursor.execute(
+            """
+            Create or replace procedure proc1 language sql
+            begin
+              select user_name, login_time from sysuser limit 2 into #tmptable;
+              DECLARE cur1 CURSOR WITH RETURN FOR select * from #tmptable;
+              OPEN cur1;
+            end;
+            """)
+        self.cursor.execute("call proc1")
+        self.assertTrue(self.cursor.description is not None)
+        self.assertTrue(len(self.cursor.description) == 2)
+
+        rows = self.cursor.fetchall()
+        self.assertEqual(type(rows), list)
+        self.assertEqual(len(rows), 2) # there has to be at least 10 items in sysobjects
+        self.assertEqual(type(rows[0].LOGIN_TIME), str)
+
+    ##DBMaker can not set None parameter
+    def test_sp_with_none(self):
+        # Reported in the forums that passing None caused an error.
+        self.cursor.execute(
+            """
+            create or replace procedure test_sp(In x varchar(20)) language sql
+            begin
+              declare y varchar(20);
+              set y = :x;
+              //select y;
+              DECLARE cur1 CURSOR WITH RETURN FOR select y;
+              open cur1;  
+            end;
+            """)
+        self.assertRaises(pyodbc.Error, self.cursor.execute, "call test_sp(?)", None)
+        #rows = self.cursor.fetchall()
+        #self.assertTrue(rows is not None)
+        #self.assertTrue(rows[0][0] == False)   # 0 years apart
+   
     #
     # misc
     #
@@ -780,80 +939,7 @@ class DBMakerTestCase(unittest.TestCase):
 
         othercnxn.autocommit = False
         self.assertEqual(othercnxn.autocommit, False)	
-    
-    def test_exc_integrity(self):
-        "Make sure an IntegretyError is raised"
-        # This is really making sure we are properly encoding and comparing the SQLSTATEs.
-        self.cursor.execute("create table t1(s1 varchar(10) primary key)")
-        self.cursor.execute("insert into t1 values ('one')")
-        self.assertRaises(pyodbc.IntegrityError, self.cursor.execute, "insert into t1 values ('one')")
-    
-    def test_columns(self):
-        # When using aiohttp, `await cursor.primaryKeys('t1')` was raising the error
-        #
-        #   Error: TypeError: argument 2 must be str, not None
-        #
-        # I'm not sure why, but PyArg_ParseTupleAndKeywords fails if you use "|s" for an
-        # optional string keyword when calling indirectly.
-
-        self.cursor.execute("create table t1(a int, b varchar(3))")
-
-        self.cursor.columns('t1')
-        results = {row.column_name: row for row in self.cursor}
-        row = results['A']
-        assert row.type_name == 'INTEGER', row.type_name
-        row = results['B']
-        assert row.type_name == 'VARCHAR'
-        assert row.column_size == 3, row.column_size
        
-
-        # Now do the same, but specifically pass in None to one of the keywords.  Old versions
-        # were parsing arguments incorrectly and would raise an error.  (This crops up when
-        # calling indirectly like columns(*args, **kwargs) which aiodbc does.)
-
-        self.cursor.columns('t1', schema=None, catalog=None)
-        results = {row.column_name: row for row in self.cursor}
-        row = results['A']
-        assert row.type_name == 'INTEGER', row.type_name
-        row = results['B']
-        assert row.type_name == 'VARCHAR'
-        assert row.column_size == 3
-		
-    def test_cancel(self):
-        # I'm not sure how to reliably cause a hang to cancel, so for now we'll settle with
-        # making sure SQLCancel is called correctly.
-        self.cursor.execute("select 1")
-        self.cursor.cancel()
-
-    def test_emoticons_as_parameter(self):
-        # https://github.com/mkleehammer/pyodbc/issues/423
-        #
-        # When sending a varchar parameter, pyodbc is supposed to set ColumnSize to the number
-        # of characters.  Ensure it works even with 4-byte characters.
-        #
-        # http://www.fileformat.info/info/unicode/char/1f31c/index.htm
-
-        v = "x \U0001F31C z"
-
-        self.cursor.execute("CREATE TABLE t1(s nvarchar(100))")
-        self.cursor.execute("insert into t1 values (?)", v)
-
-        result = self.cursor.execute("select s from t1").fetchone()[0]
-
-        self.assertEqual(result, v)
-
-    def test_emoticons_as_literal(self):
-        # https://github.com/mkleehammer/pyodbc/issues/630
-
-        v = "x \U0001F31C z"
-
-        self.cursor.execute("CREATE TABLE t1(s nvarchar(100))")
-        self.cursor.execute("insert into t1 values ('%s')" % v)
-
-        result = self.cursor.execute("select s from t1").fetchone()[0]
-
-        self.assertEqual(result, v)
-   
     def test_cursorcommit(self):
         "Ensure cursor.commit works"
         othercnxn = pyodbc.connect(self.connection_string)
@@ -892,6 +978,13 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertEqual(self.cursor.fetchone()[0], 1)
         self.cursor.skip(2)
         self.assertEqual(self.cursor.fetchone()[0], 4)
+    ##DBMaker can not set timeout 
+    def test_timeout(self):
+        self.assertEqual(self.cnxn.timeout, 0) # defaults to zero (off)
+
+        def f():
+           self.cnxn.timeout = 30
+        self.assertRaises(pyodbc.Error, f)
 
     def test_sets_execute(self):
         # Only lists and tuples are allowed.
@@ -1008,12 +1101,35 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertTrue(type(messages[0][1]) is str)
         self.assertEqual('[01004] (63)', messages[0][0])
         self.assertTrue(messages[0][1].endswith("[DBMaker] data truncated when converting from different type"))
+    
+    def test_none_param(self):
+        "Ensure None can be used for params other than the first"
+        # Some driver/db versions would fail if NULL was not the first parameter because SQLDescribeParam (only used
+        # with NULL) could not be used after the first call to SQLBindParameter.  This means None always worked for the
+        # first column, but did not work for later columns.
+        #
+        # If SQLDescribeParam doesn't work, pyodbc would use VARCHAR which almost always worked.  However,
+        # binary/varbinary won't allow an implicit conversion.
+        self.cursor.execute("create table t1(n int, b binary(16))")
+        self.cursor.execute("insert into t1 values (1, 'linda')")
+        row = self.cursor.execute("select * from t1").fetchone()
+        self.assertEqual(row.N, 1)
+        self.assertEqual(type(row.B), bytes)
+
+        sql = "update t1 set n=?, b=?"
+        self.cursor.execute(sql, 2, None)
+        row = self.cursor.execute("select * from t1").fetchone()
+        self.assertEqual(row.N, 2)
+        self.assertEqual(row.B, None)
 
     def test_output_conversion(self):
-        def convert(value):
+        def convert1(value):
             # `value` will be a string.  We'll simply add an X at the beginning at the end.
             return 'X' + value.decode('latin1') + 'X'
-        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert)
+        def convert2(value):
+            # Same as above, but add a Y at the beginning at the end.
+            return 'Y' + value.decode('latin1') + 'Y'        
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert1)
         self.cursor.execute("create table t1(n int, v varchar(10))")
         self.cursor.execute("insert into t1 values (1, '123.45')")
         value = self.cursor.execute("select v from t1").fetchone()[0]
@@ -1025,7 +1141,7 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertEqual(value, '123.45')
 
         # Same but clear using remove_output_converter.
-        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert)
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert1)
         value = self.cursor.execute("select v from t1").fetchone()[0]
         self.assertEqual(value, 'X123.45X')
 
@@ -1034,13 +1150,44 @@ class DBMakerTestCase(unittest.TestCase):
         self.assertEqual(value, '123.45')
 
         # And lastly, clear by passing None for the converter.
-        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert)
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert1)
         value = self.cursor.execute("select v from t1").fetchone()[0]
         self.assertEqual(value, 'X123.45X')
 
         self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, None)
         value = self.cursor.execute("select v from t1").fetchone()[0]
         self.assertEqual(value, '123.45')
+        # retrieve and temporarily replace converter (get_output_converter)
+        #
+        #   case_1: converter already registered
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert1)
+        value = self.cursor.execute("select v from t1").fetchone()[0]
+        self.assertEqual(value, 'X123.45X')
+        prev_converter = self.cnxn.get_output_converter(pyodbc.SQL_VARCHAR)
+        self.assertNotEqual(prev_converter, None)
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert2)
+        value = self.cursor.execute("select v from t1").fetchone()[0]
+        self.assertEqual(value, 'Y123.45Y')
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, prev_converter)
+        value = self.cursor.execute("select v from t1").fetchone()[0]
+        self.assertEqual(value, 'X123.45X')
+        #
+        #   case_2: no converter already registered
+        self.cnxn.clear_output_converters()
+        value = self.cursor.execute("select v from t1").fetchone()[0]
+        self.assertEqual(value, '123.45')
+        prev_converter = self.cnxn.get_output_converter(pyodbc.SQL_VARCHAR)
+        self.assertEqual(prev_converter, None)
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, convert2)
+        value = self.cursor.execute("select v from t1").fetchone()[0]
+        self.assertEqual(value, 'Y123.45Y')
+        self.cnxn.add_output_converter(pyodbc.SQL_VARCHAR, prev_converter)
+        value = self.cursor.execute("select v from t1").fetchone()[0]
+        self.assertEqual(value, '123.45')
+
+    def test_login_timeout(self):
+        # This can only test setting since there isn't a way to cause it to block on the server side.
+        cnxns = pyodbc.connect(self.connection_string, timeout=2)
 
     def test_row_equal(self):
         self.cursor.execute("create table t1(n int, s varchar(20))")
@@ -1163,8 +1310,8 @@ class DBMakerTestCase(unittest.TestCase):
         # This is from GitHub issue #190
         self.cursor.execute("create table t1(a int)")
         self.cursor.execute("insert into t1 values (1)")
-        self.cursor.execute('select a as "Tipolog铆a" from t1')
-        self.assertEqual(self.cursor.description[0][0], "TIPOLOG铆A")
+        self.cursor.execute('select a as "Tipología" from t1')
+        self.assertEqual(self.cursor.description[0][0], "TIPOLOGÍA")
 
     def test_exc_integrity(self):
         "Make sure an IntegretyError is raised"
@@ -1180,15 +1327,14 @@ class DBMakerTestCase(unittest.TestCase):
         #
         # I'm not sure why, but PyArg_ParseTupleAndKeywords fails if you use "|s" for an
         # optional string keyword when calling indirectly.
-
-        self.cursor.execute("create table t1(a int, b varchar(3), x螐z varchar(4))")
-
+        self.cursor.execute("create table t1(a int, b varchar(3), xΏz varchar(4))")
         self.cursor.columns('t1')
+       
         results = {row.column_name: row for row in self.cursor}
-        row = results['a']
-        assert row.type_name == 'int', row.type_name
-        row = results['b']
-        assert row.type_name == 'varchar'
+        row = results['A']
+        assert row.type_name == 'INTEGER', row.type_name
+        row = results['B']
+        assert row.type_name == 'VARCHAR'
         assert row.column_size == 3
 
         # Now do the same, but specifically pass in None to one of the keywords.  Old versions
@@ -1197,30 +1343,14 @@ class DBMakerTestCase(unittest.TestCase):
 
         self.cursor.columns('t1', schema=None, catalog=None)
         results = {row.column_name: row for row in self.cursor}
-        row = results['a']
-        assert row.type_name == 'int', row.type_name
-        row = results['b']
-        assert row.type_name == 'varchar'
+        row = results['A']
+        assert row.type_name == 'INTEGER', row.type_name
+        row = results['B']
+        assert row.type_name == 'VARCHAR'
         assert row.column_size == 3
-        row = results['x螐z']
-        assert row.type_name == 'varchar'
+        row = results['XΏZ']
+        assert row.type_name == 'VARCHAR'
         assert row.column_size == 4, row.column_size
-
-        # <test null termination fix (issue #506)>
-        for i in range(8, 16):
-            table_name = 'pyodbc_89abcdef'[:i]
-
-            self.cursor.execute("""\
-            IF OBJECT_ID (N'{0}', N'U') IS NOT NULL DROP TABLE {0};
-            CREATE TABLE {0} (id INT PRIMARY KEY);
-            """.format(table_name))
-
-            col_count = len([col.column_name for col in self.cursor.columns(table_name)])
-            # print('table [{}] ({} characters): {} columns{}'.format(table_name, i, col_count, ' <-' if col_count == 0 else ''))
-            self.assertEqual(col_count, 1)
-
-            self.cursor.execute("DROP TABLE {};".format(table_name))
-        # </test null termination fix (issue #506)>
 
     def test_cancel(self):
         # I'm not sure how to reliably cause a hang to cancel, so for now we'll settle with
@@ -1261,20 +1391,6 @@ class DBMakerTestCase(unittest.TestCase):
         result = self.cursor.execute("select s from t1").fetchone()[0]
 
         self.assertEqual(result, v)
-
-    def test_columns(self):
-        self.cursor.execute(
-            """
-            create table t1(n int, d timestamp, c nvarchar(100))
-            """)
-
-        self.cursor.columns(table='t1')
-        names = {row.column_name for row in self.cursor.fetchall()}
-        assert names == {'N', 'D', 'C'}, 'names=%r' % names
-
-        self.cursor.columns(table='t1', column='c')
-        row = self.cursor.fetchone()
-        assert row.column_name == 'C'
 
 def main():
     from optparse import OptionParser
