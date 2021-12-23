@@ -57,8 +57,8 @@ ECHO *** pip freeze...
 
 ECHO.
 ECHO *** Get version of the built pyodbc module:
-echo %cd%
-copy "%DBMAKERPATH%\\bundle\\dmapi54.dll" "%DBMAKERPATH%\\build\\bdist.win32\\" 
+echo copy "%DBMAKERPATH%\\bundle\\dmapi54.dll" "%DBMAKERPATH%\\build\\bdist.win32\\egg\\"
+copy "%DBMAKERPATH%\\bundle\\dmapi54.dll" "%DBMAKERPATH%\\build\\bdist.win32\\egg\\" 
 
 "%PYTHON_HOME%\python" -c "import pyodbc; print(pyodbc.version)"
 
