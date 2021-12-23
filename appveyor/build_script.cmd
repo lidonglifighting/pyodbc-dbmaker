@@ -14,6 +14,7 @@ ECHO PYTHON_HOME   : %PYTHON_HOME%
 ECHO MSSQL_INSTANCE: %MSSQL_INSTANCE%
 ECHO POSTGRES_PATH : %POSTGRES_PATH%
 ECHO MYSQL_PATH    : %MYSQL_PATH%
+ECHO DBMAKERPATH     : %DBMAKERPATH%\\bundle
 
 ECHO.
 ECHO *** Get build info and compiler for the current Python installation:
@@ -30,7 +31,13 @@ IF ERRORLEVEL 1 (
 
 ECHO.
 ECHO *** Building the pyodbc module...
-%WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build
+IF NOT "%APVYR_BUILD_DBMAKER%" == "true" (
+ %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build
+) ELSE (
+echo %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build_ext  --define DBMAKER --include-dirs %DBMAKERPATH%\\bundle\\include   --library-dirs %DBMAKERPATH%\\bundle\\lib  --libraries "dmapi54"
+ %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build_ext  --define DBMAKER --include-dirs %DBMAKERPATH%\\bundle\\include   --library-dirs %DBMAKERPATH%\\bundle\\lib  --libraries "dmapi54"
+)
+
 IF ERRORLEVEL 1 (
   ECHO *** ERROR: pyodbc build failed
   EXIT 1
