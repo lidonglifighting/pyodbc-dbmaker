@@ -103,6 +103,7 @@ cache:
 
 install:
   - ps: .\appveyor\install.ps1
+  - call .\appveyor\installdbmaker.cmd
 
 # ref: https://www.appveyor.com/docs/services-databases/
 services:
@@ -115,6 +116,7 @@ build_script:
 
 test_script:
   - call .\appveyor\test_script.cmd
+  - call .\appveyor\test_dbmaker.cmd
 
 after_test:
   - call .\appveyor\after_test.cmd
