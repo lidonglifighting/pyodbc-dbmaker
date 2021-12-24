@@ -14,7 +14,7 @@ ECHO PYTHON_HOME   : %PYTHON_HOME%
 ECHO MSSQL_INSTANCE: %MSSQL_INSTANCE%
 ECHO POSTGRES_PATH : %POSTGRES_PATH%
 ECHO MYSQL_PATH    : %MYSQL_PATH%
-ECHO DBMAKERPATH     : %DBMAKERPATH%\\bundle
+ECHO DBMAKERPATH     : %DBMAKERPATH%\bundle
 
 ECHO.
 ECHO *** Get build info and compiler for the current Python installation:
@@ -57,9 +57,6 @@ ECHO *** pip freeze...
 
 ECHO.
 ECHO *** Get version of the built pyodbc module:
-echo %path%
-echo copy "%DBMAKERPATH%\\bundle\\dmapi54.dll" "%DBMAKERPATH%\\build\\bdist.win32\\egg\\"
-copy "%DBMAKERPATH%\\bundle\\dmapi54.dll" "%DBMAKERPATH%\\build\\bdist.win32\\egg\\" 
 
 "%PYTHON_HOME%\python" -c "import pyodbc; print(pyodbc.version)"
 
