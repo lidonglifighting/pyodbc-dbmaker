@@ -5,7 +5,7 @@ ECHO # DBMaker
 ECHO ############################################################
 set DBMAKERPATH=%cd%
 echo %DBMAKERPATH%
-cd %DBMAKERPATH%\\bundle
+cd %DBMAKERPATH%\bundle
 echo [utf8db] >>dmconfig.ini
 echo db_lcode=10 >>dmconfig.ini
 echo db_clilcode=utf-8>>dmconfig.ini
@@ -27,7 +27,7 @@ IF %PYTHON_MAJOR_VERSION% EQU 2 (
 SET CONN_STR=Driver=DBMaker 5.4 bundle Driver;Database=utf8db; uid=sysadm; pwd=;
 ECHO.
 ECHO *** Run tests using driver: "DBMaker 5.4 bundle Driver"
-copy %DBMAKERPATH%\\bundle\\dmconfig.ini dmconfig.ini
+copy %DBMAKERPATH%\bundle\dmconfig.ini dmconfig.ini
 echo %PYTHON_HOME%\python appveyor\test_connect.py "Driver=DBMaker 5.4 bundle Driver;Database=utf8db; uid=sysadm; pwd="
 "%PYTHON_HOME%\python" appveyor\test_connect.py "Driver=DBMaker 5.4 bundle Driver;Database=utf8db; uid=sysadm; pwd="
 IF ERRORLEVEL 1 (
@@ -41,7 +41,7 @@ echo %PYTHON_HOME%\python %TESTS_DIR%\dbmakertests.py -v "Driver=DBMaker 5.4 bun
 IF ERRORLEVEL 1 SET OVERALL_RESULT=1
 
 echo delete dbmaker bundle
-cd %DBMAKERPATH%\\bundle
+cd %DBMAKERPATH%\bundle
 echo connect to utf8db sysadm; > termutf8db.sql
 echo terminate db; >> termutf8db.sql
 echo q; >> termutf8db.sql

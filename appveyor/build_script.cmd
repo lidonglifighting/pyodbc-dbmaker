@@ -34,8 +34,8 @@ ECHO *** Building the pyodbc module...
 IF NOT "%APVYR_BUILD_DBMAKER%" == "true" (
  %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build
 ) ELSE (
-echo %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build_ext  --define DBMAKER --include-dirs %DBMAKERPATH%\\bundle\\include   --library-dirs %DBMAKERPATH%\\bundle\\lib  --libraries "dmapi54"
- %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build_ext  --define DBMAKER --include-dirs %DBMAKERPATH%\\bundle\\include   --library-dirs %DBMAKERPATH%\\bundle\\lib  --libraries "dmapi54"
+echo %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build_ext  --define DBMAKER --include-dirs %DBMAKERPATH%\bundle\include   --library-dirs %DBMAKERPATH%\bundle\lib  --libraries "dmapi54"
+ %WITH_COMPILER% "%PYTHON_HOME%\python" setup.py build_ext  --define DBMAKER --include-dirs %DBMAKERPATH%\bundle\include   --library-dirs %DBMAKERPATH%\bundle\lib  --libraries "dmapi54"
 )
 
 IF ERRORLEVEL 1 (
