@@ -16,7 +16,8 @@ IF %PYTHON_ARCH% EQU 32 (
   powershell curl -o dbmaker.zip https://www.dbmaker.com/download/5.4.4Beta/dbmaker-5.4.4Bundle-WIN64.zip
 )
 powershell -command "Expand-Archive -Force 'dbmaker.zip' %DBMAKERPATH%"
-
+echo set path=%path%;%DBMAKERPATH%\\bundle
+set path=%path%;%DBMAKERPATH%\\bundle
 echo "Installing the driver..."
 IF %PYTHON_ARCH% EQU 32 (
 echo "32bit odbc driver"
