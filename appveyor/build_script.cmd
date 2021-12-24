@@ -60,6 +60,5 @@ ECHO *** Get version of the built pyodbc module:
 echo %path%
 copy %DBMAKERPATH%\bundle\dmapi54.dll %DBMAKERPATH%\build\lib.win32-3.8\
 
-#"%PYTHON_HOME%\python" -c "import pyodbc; print(pyodbc.version)"
 
 ECHO.
